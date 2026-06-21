@@ -17,11 +17,11 @@ cassady
 
 ## Configure
 
-By default Cass uses:
+By default Cass creates `~/.cass/providers.json` and `~/.cass/models.json` with Fireworks configured:
 
 - base URL: `https://api.fireworks.ai/inference/v1`
 - model: `accounts/fireworks/models/qwen3p7-plus`
-- API key env var: `FIREWORKS_API_KEY`
+- API key: `"$FIREWORKS_API_KEY"`
 
 Set your key:
 
@@ -29,21 +29,26 @@ Set your key:
 export FIREWORKS_API_KEY=...
 ```
 
-Optional config lives at `~/.cass/config.json`:
+User preferences live at `~/.cass/config.json`:
 
 ```json
 {
-  "provider": "openai-compatible",
-  "model": "accounts/fireworks/models/qwen3p7-plus",
-  "base_url": "https://api.fireworks.ai/inference/v1",
-  "api_key_env": "FIREWORKS_API_KEY",
+  "default_model": "accounts/fireworks/models/qwen3p7-plus",
   "default_access_mode": "read-only"
 }
 ```
 
+Provider connection details belong in `~/.cass/providers.json`. Model metadata belongs in `~/.cass/models.json`. API keys may be literal strings or environment-variable references like `"$FIREWORKS_API_KEY"`.
+
+Validate config with:
+
+```sh
+cass check
+```
+
 Extra global instructions can be placed in `~/.cass/global.md`.
 
-Bundled documentation from this build is embedded into the binary and installed to `~/.cass/docs` on startup.
+Bundled documentation from this build is embedded into the binary and installed to `~/.cass/docs` on startup. See `~/.cass/docs/configuration.md` for full configuration docs.
 
 ## Usage
 
@@ -51,6 +56,7 @@ Bundled documentation from this build is embedded into the binary and installed 
 cass [--model MODEL] [--base-url URL] [--api-key-env ENV] [--cwd PATH]
 cass --resume <chat-id>
 cass --resume
+cass check
 ```
 
 `cass --resume` without an ID lists chats for the current directory.
@@ -69,7 +75,8 @@ cass --resume
 
 ## Commands
 
-- `/model <model>`: switch the model for future turns
+- `cass check`: validate Cass config files
+- `/model <model>`: switch the model for future turns; model autocomplete lists entries from `~/.cass/models.json`
 - `/resume <chat>`: resume a saved chat; chat autocomplete lists chats for the current directory
 - `/status`: show current chat status
 

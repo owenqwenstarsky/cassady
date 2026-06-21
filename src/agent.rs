@@ -2,7 +2,7 @@ use crate::access::AccessMode;
 use crate::config::Config;
 use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
-use crate::providers::openai_compatible::OpenAiCompatibleProvider;
+use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
 use crate::providers::types::ModelMessage;
 use crate::tools::{self, ToolContext};
 use anyhow::Result;
@@ -46,18 +46,19 @@ pub async fn run_turn(
         ts: now_ts(),
     })?;
 
-    let provider = match OpenAiCompatibleProvider::new(
-        settings.config.model.clone(),
-        settings.config.base_url.clone(),
-        settings.config.api_key_env.clone(),
-    ) {
-        Ok(p) => p,
+    let api_key = match settings.config.resolved_api_key() {
+        Ok(api_key) => api_key,
         Err(err) => {
             let _ = tx.send(AgentEvent::Status(err.to_string()));
             let _ = tx.send(AgentEvent::TurnFinished);
             return Ok(conversation);
         }
     };
+    let provider = OpenAiCompatibleProvider::new(OpenAiCompatibleSettings {
+        model: settings.config.model.clone(),
+        base_url: settings.config.active_provider.base_url.clone(),
+        api_key,
+    });
 
     let docs_dir = settings.config.docs_dir();
     let tool_ctx = ToolContext {

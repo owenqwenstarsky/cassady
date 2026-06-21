@@ -1,9 +1,12 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser, Clone)]
 #[command(name = "cass", version, about = "Cassady/Cass terminal coding agent")]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Resume a chat. Without a chat id, list chats for the current cwd.
     #[arg(long, num_args = 0..=1, value_name = "CHAT_ID")]
     pub resume: Option<Option<String>>,
@@ -31,6 +34,12 @@ pub struct Cli {
     /// Force full-access mode.
     #[arg(long, conflicts_with = "readonly")]
     pub full_access: bool,
+}
+
+#[derive(Debug, Subcommand, Clone, PartialEq, Eq)]
+pub enum Command {
+    /// Validate Cass config files.
+    Check,
 }
 
 pub fn parse() -> Cli {

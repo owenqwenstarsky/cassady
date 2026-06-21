@@ -1,6 +1,7 @@
 pub mod access;
 pub mod agent;
 pub mod app;
+pub mod check;
 pub mod cli;
 pub mod config;
 pub mod conversation;

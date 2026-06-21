@@ -1,6 +1,6 @@
 use crate::agent::{self, AgentEvent, AgentSettings};
-use crate::cli;
-use crate::config::Config;
+use crate::cli::{self, Command};
+use crate::config::{Config, ModelDefinition};
 use crate::conversation::{self, Conversation};
 use crate::prompt;
 use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
@@ -17,6 +17,15 @@ use tokio::task::JoinHandle;
 
 pub async fn run() -> Result<()> {
     let cli = cli::parse();
+    if matches!(cli.command, Some(Command::Check)) {
+        let report = crate::check::run(&cli)?;
+        print!("{}", report.render());
+        if report.has_errors() {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     let config = Config::load(&cli)?;
     let cwd = resolve_cwd(cli.cwd.clone())?;
 
@@ -533,6 +542,10 @@ fn build_autofill(
         return Ok(Some(menu));
     }
 
+    if let Some(menu) = model_autofill(input, selected, config)? {
+        return Ok(Some(menu));
+    }
+
     resume_chat_autofill(input, selected, config, cwd)
 }
 
@@ -564,6 +577,83 @@ fn command_autofill(input: &str, selected: usize) -> Option<AutoFillMenu> {
     } else {
         Some(AutoFillMenu::new("Commands", 0, input.len(), items).with_selected(selected))
     }
+}
+
+fn model_autofill(input: &str, selected: usize, config: &Config) -> Result<Option<AutoFillMenu>> {
+    let Some(rest) = input.strip_prefix("/model") else {
+        return Ok(None);
+    };
+    if rest.is_empty() || !rest.chars().next().is_some_and(|c| c.is_whitespace()) {
+        return Ok(None);
+    }
+
+    let arg = rest.trim_start_matches(char::is_whitespace);
+    if arg.chars().any(char::is_whitespace) {
+        return Ok(None);
+    }
+    let replacement_start = input.len() - arg.len();
+    let query = arg.to_ascii_lowercase();
+
+    let models = crate::config::load_or_create_default_model_registry(&config.root)?;
+    if !arg.is_empty() && models.models.iter().any(|model| model.id == arg) {
+        return Ok(None);
+    }
+
+    let mut items = Vec::new();
+    for model in models.models {
+        if model_matches(&model, &query) {
+            let id = model.id.clone();
+            let detail = model_detail(&model, &config.model);
+            items.push(AutoFillItem::new(id.clone(), id).with_detail(detail));
+        }
+    }
+
+    if items.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(
+            AutoFillMenu::new("Models", replacement_start, input.len(), items)
+                .with_selected(selected),
+        ))
+    }
+}
+
+fn model_matches(model: &ModelDefinition, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    model.id.to_ascii_lowercase().contains(query)
+        || model.provider.to_ascii_lowercase().contains(query)
+        || model
+            .display_name
+            .as_ref()
+            .is_some_and(|name| name.to_ascii_lowercase().contains(query))
+}
+
+fn model_detail(model: &ModelDefinition, current_model: &str) -> String {
+    let mut parts = Vec::new();
+    if model.id == current_model {
+        parts.push("current".to_string());
+    }
+    if let Some(name) = &model.display_name {
+        if !name.trim().is_empty() && name != &model.id {
+            parts.push(name.clone());
+        }
+    }
+    parts.push(format!("provider {}", model.provider));
+    if let Some(context_length) = model.context_length {
+        parts.push(format!("ctx {context_length}"));
+    }
+    if let Some(max_output_tokens) = model.max_output_tokens {
+        parts.push(format!("max {max_output_tokens}"));
+    }
+    if !model.supports_tools {
+        parts.push("no tools".to_string());
+    }
+    if !model.supports_streaming {
+        parts.push("no streaming".to_string());
+    }
+    parts.join(" · ")
 }
 
 fn resume_chat_autofill(
@@ -797,4 +887,75 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
         }
     }
     blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn config_with_models(models_json: &str) -> (tempfile::TempDir, Config) {
+        let root = tempdir().unwrap();
+        std::fs::write(root.path().join("models.json"), models_json).unwrap();
+        let mut config = Config::default();
+        config.root = root.path().to_path_buf();
+        config.model = "alpha-model".to_string();
+        (root, config)
+    }
+
+    #[test]
+    fn model_autofill_lists_models_from_models_json() {
+        let (_root, config) = config_with_models(
+            r#"{
+  "models": [
+    {
+      "id": "alpha-model",
+      "provider": "fireworks",
+      "display_name": "Alpha Model",
+      "context_length": 1000,
+      "max_output_tokens": 200
+    },
+    {
+      "id": "beta-model",
+      "provider": "other",
+      "display_name": "Beta Model"
+    }
+  ]
+}
+"#,
+        );
+
+        let menu = model_autofill("/model ", 0, &config).unwrap().unwrap();
+
+        assert_eq!(menu.items.len(), 2);
+        assert_eq!(menu.items[0].label, "alpha-model");
+        assert_eq!(menu.items[0].insert, "alpha-model");
+        assert_eq!(menu.apply("/model ").unwrap(), "/model alpha-model");
+        let detail = menu.items[0].detail.as_deref().unwrap();
+        assert!(detail.contains("current"));
+        assert!(detail.contains("Alpha Model"));
+        assert!(detail.contains("provider fireworks"));
+    }
+
+    #[test]
+    fn model_autofill_filters_and_hides_exact_matches() {
+        let (_root, config) = config_with_models(
+            r#"{
+  "models": [
+    { "id": "alpha-model", "provider": "fireworks" },
+    { "id": "beta-model", "provider": "other", "display_name": "Beta Model" }
+  ]
+}
+"#,
+        );
+
+        let menu = model_autofill("/model beta", 0, &config).unwrap().unwrap();
+        assert_eq!(menu.items.len(), 1);
+        assert_eq!(menu.items[0].insert, "beta-model");
+        assert_eq!(menu.apply("/model beta").unwrap(), "/model beta-model");
+
+        assert!(model_autofill("/model alpha-model", 0, &config)
+            .unwrap()
+            .is_none());
+    }
 }

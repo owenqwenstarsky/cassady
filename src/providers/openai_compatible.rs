@@ -2,7 +2,7 @@ use super::types::{CompletionResult, ModelMessage};
 use crate::agent::AgentEvent;
 use crate::conversation::StoredToolCall;
 use crate::tools::ToolSpec;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -17,6 +17,13 @@ pub struct OpenAiCompatibleProvider {
     api_key: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct OpenAiCompatibleSettings {
+    pub model: String,
+    pub base_url: String,
+    pub api_key: String,
+}
+
 #[derive(Debug, Default)]
 struct PartialToolCall {
     id: Option<String>,
@@ -25,15 +32,13 @@ struct PartialToolCall {
 }
 
 impl OpenAiCompatibleProvider {
-    pub fn new(model: String, base_url: String, api_key_env: String) -> Result<Self> {
-        let api_key = std::env::var(&api_key_env)
-            .with_context(|| format!("missing API key environment variable `{api_key_env}`"))?;
-        Ok(Self {
+    pub fn new(settings: OpenAiCompatibleSettings) -> Self {
+        Self {
             client: Client::new(),
-            model,
-            base_url: normalize_base_url(&base_url),
-            api_key,
-        })
+            model: settings.model,
+            base_url: normalize_base_url(&settings.base_url),
+            api_key: settings.api_key,
+        }
     }
 
     pub async fn complete(
