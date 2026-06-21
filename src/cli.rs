@@ -1,0 +1,38 @@
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Debug, Parser, Clone)]
+#[command(name = "cass", version, about = "Cassady/Cass terminal coding agent")]
+pub struct Cli {
+    /// Resume a chat. Without a chat id, list chats for the current cwd.
+    #[arg(long, num_args = 0..=1, value_name = "CHAT_ID")]
+    pub resume: Option<Option<String>>,
+
+    /// Override model for this session.
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Override OpenAI-compatible base URL.
+    #[arg(long)]
+    pub base_url: Option<String>,
+
+    /// Override API key environment variable name.
+    #[arg(long)]
+    pub api_key_env: Option<String>,
+
+    /// Set launch cwd/root for relative paths.
+    #[arg(long)]
+    pub cwd: Option<PathBuf>,
+
+    /// Force read-only mode.
+    #[arg(long, conflicts_with = "full_access")]
+    pub readonly: bool,
+
+    /// Force full-access mode.
+    #[arg(long, conflicts_with = "readonly")]
+    pub full_access: bool,
+}
+
+pub fn parse() -> Cli {
+    Cli::parse()
+}
