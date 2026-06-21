@@ -35,6 +35,8 @@ pub struct AgentSettings {
     pub mode: AccessMode,
 }
 
+const EMPTY_FINAL_RETRY_PROMPT: &str = "The previous response contained no user-facing text. Provide a concise final user-facing response summarizing the outcome. Do not call tools unless absolutely necessary.";
+
 pub async fn run_turn(
     mut conversation: Conversation,
     user_message: String,
@@ -49,7 +51,11 @@ pub async fn run_turn(
     let api_key = match settings.config.resolved_api_key() {
         Ok(api_key) => api_key,
         Err(err) => {
-            let _ = tx.send(AgentEvent::Status(err.to_string()));
+            append_visible_assistant(
+                &mut conversation,
+                &tx,
+                format!("I couldn't start the turn because the API key is not available: {err}"),
+            )?;
             let _ = tx.send(AgentEvent::TurnFinished);
             return Ok(conversation);
         }
@@ -69,6 +75,7 @@ pub async fn run_turn(
         model_result_limit: settings.config.model_tool_result_limit,
     };
 
+    let mut retrying_empty_final = false;
     loop {
         let allowed = tools::available_tool_names(settings.mode);
         let system = prompt::build_effective_system_prompt(
@@ -79,23 +86,49 @@ pub async fn run_turn(
             &settings.config.model,
             &allowed,
         );
-        let messages = build_messages(
+        let mut messages = build_messages(
             &conversation.records,
             system,
             settings.config.context_message_limit,
         );
+        if retrying_empty_final {
+            messages.push(ModelMessage::User {
+                content: EMPTY_FINAL_RETRY_PROMPT.to_string(),
+            });
+        }
         let completion = match provider
             .complete(messages, tools::specs(settings.mode), &tx)
             .await
         {
             Ok(c) => c,
             Err(err) => {
-                let _ = tx.send(AgentEvent::Status(format!("provider error: {err}")));
+                append_visible_assistant(
+                    &mut conversation,
+                    &tx,
+                    format!("I couldn't complete the turn because the provider returned an error: {err}"),
+                )?;
                 break;
             }
         };
 
         let tool_calls = completion.tool_calls.clone();
+        if tool_calls.is_empty() && completion.content.trim().is_empty() {
+            if !retrying_empty_final {
+                retrying_empty_final = true;
+                let _ = tx.send(AgentEvent::Status(
+                    "model returned an empty final response; requesting a final message".into(),
+                ));
+                continue;
+            }
+            append_visible_assistant(
+                &mut conversation,
+                &tx,
+                "The model finished without a final response.".into(),
+            )?;
+            break;
+        }
+        retrying_empty_final = false;
+
         conversation.append(Record::Assistant {
             content: completion.content,
             tool_calls: tool_calls.clone(),
@@ -129,6 +162,19 @@ pub async fn run_turn(
     }
     let _ = tx.send(AgentEvent::TurnFinished);
     Ok(conversation)
+}
+
+fn append_visible_assistant(
+    conversation: &mut Conversation,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+    content: String,
+) -> Result<()> {
+    let _ = tx.send(AgentEvent::AssistantChunk(content.clone()));
+    conversation.append(Record::Assistant {
+        content,
+        tool_calls: Vec::new(),
+        ts: now_ts(),
+    })
 }
 
 fn build_messages(records: &[Record], system: String, limit: usize) -> Vec<ModelMessage> {

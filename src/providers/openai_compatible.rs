@@ -73,22 +73,16 @@ impl OpenAiCompatibleProvider {
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            buf.push_str(&String::from_utf8_lossy(&chunk));
+            let chunk_text = String::from_utf8_lossy(&chunk).replace("\r\n", "\n");
+            buf.push_str(&chunk_text);
             while let Some(pos) = buf.find("\n\n") {
                 let frame = buf[..pos].to_string();
                 buf = buf[pos + 2..].to_string();
-                for line in frame.lines() {
-                    let line = line.trim();
-                    if !line.starts_with("data:") {
-                        continue;
-                    }
-                    let data = line.trim_start_matches("data:").trim();
-                    if data == "[DONE]" {
-                        continue;
-                    }
-                    handle_chunk(data, &mut content, &mut partials, tx)?;
-                }
+                process_frame(&frame, &mut content, &mut partials, tx)?;
             }
+        }
+        if !buf.trim().is_empty() {
+            process_frame(&buf, &mut content, &mut partials, tx)?;
         }
 
         let tool_calls = partials
@@ -110,6 +104,26 @@ impl OpenAiCompatibleProvider {
             tool_calls,
         })
     }
+}
+
+fn process_frame(
+    frame: &str,
+    content: &mut String,
+    partials: &mut BTreeMap<usize, PartialToolCall>,
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+) -> Result<()> {
+    for line in frame.lines() {
+        let line = line.trim();
+        if !line.starts_with("data:") {
+            continue;
+        }
+        let data = line.trim_start_matches("data:").trim();
+        if data == "[DONE]" {
+            continue;
+        }
+        handle_chunk(data, content, partials, tx)?;
+    }
+    Ok(())
 }
 
 fn handle_chunk(

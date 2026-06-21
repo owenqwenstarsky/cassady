@@ -46,6 +46,6 @@ pub fn build_effective_system_prompt(
         AccessMode::ReadOnly => prompt.push_str("In read-only mode, you may inspect files with ls, read, and grep only inside the launch working directory or bundled Cass docs directory. Do not request write or edit. If a task requires modification, explain what needs full-access mode.\n\n"),
         AccessMode::FullAccess => prompt.push_str("In full-access mode, you may request ls, read, grep, write, and edit when needed. Cass does not restrict read paths to the launch directory, but normal operating-system permissions still apply. write and edit are still blocked under the bundled Cass docs directory.\n\n"),
     }
-    prompt.push_str("6. Response behavior\n\nAssistant output is streamed to the user. Keep user-facing text direct and useful. Tool calls and results are visible to the user, so avoid claiming work happened until the relevant tool result confirms it.\n");
+    prompt.push_str("6. Response behavior\n\nAssistant output is streamed to the user. Keep user-facing text direct and useful. Tool calls and results are visible to the user, so avoid claiming work happened until the relevant tool result confirms it. After using tools or completing requested work, always end the turn with a concise final user-facing response. Do not finish a turn with only tool calls.\n");
     prompt
 }
