@@ -31,7 +31,7 @@ fn default_max() -> usize {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "grep".into(),
-        description: "Search files or directories for literal text or regex matches. Use before read for large inputs.".into(),
+        description: "Search files or directories for literal text or regex matches. Use before read for large inputs. In read-only mode, paths must stay inside the launch cwd or bundled docs directory.".into(),
         parameters: schema::object(json!({
             "query": {"type":"string"},
             "paths": {"type":"array", "items":{"type":"string"}, "default":["."]},
@@ -62,7 +62,7 @@ pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
 
     let mut files = Vec::new();
     for p in &args.paths {
-        let path = super::path::resolve_existing(p, &ctx.cwd, &ctx.read_only_root, ctx.mode)?;
+        let path = super::path::resolve_existing(p, &ctx.cwd, &ctx.read_roots, ctx.mode)?;
         collect_files(&path, &mut files)?;
     }
 

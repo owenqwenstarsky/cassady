@@ -59,10 +59,12 @@ pub async fn run_turn(
         }
     };
 
+    let docs_dir = settings.config.docs_dir();
     let tool_ctx = ToolContext {
         mode: settings.mode,
         cwd: settings.cwd.clone(),
-        read_only_root: settings.cwd.clone(),
+        read_roots: vec![settings.cwd.clone(), docs_dir.clone()],
+        blocked_write_roots: vec![docs_dir.clone()],
         model_result_limit: settings.config.model_tool_result_limit,
     };
 
@@ -72,6 +74,7 @@ pub async fn run_turn(
             &conversation.base_system_prompt(),
             settings.mode,
             &settings.cwd,
+            &docs_dir,
             &settings.config.model,
             &allowed,
         );

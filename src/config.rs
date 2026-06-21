@@ -28,10 +28,13 @@ pub struct Config {
     pub model_tool_result_limit: usize,
     pub ui_tool_result_limit: usize,
     pub root: PathBuf,
+    pub docs_dir: PathBuf,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let root = cass_root();
+        let docs_dir = root.join("docs");
         Self {
             provider: "openai-compatible".to_string(),
             model: "accounts/fireworks/models/qwen3p7-plus".to_string(),
@@ -41,7 +44,8 @@ impl Default for Config {
             context_message_limit: 80,
             model_tool_result_limit: 24_000,
             ui_tool_result_limit: 4_000,
-            root: cass_root(),
+            root,
+            docs_dir,
         }
     }
 }
@@ -57,8 +61,10 @@ impl Config {
         let root = cass_root();
         fs::create_dir_all(root.join("conversations"))
             .with_context(|| format!("creating {}", root.join("conversations").display()))?;
+        let docs_dir = crate::docs::install(&root)?;
         let mut cfg = Config::default();
         cfg.root = root.clone();
+        cfg.docs_dir = docs_dir;
 
         let path = root.join("config.json");
         if path.exists() {
@@ -117,5 +123,9 @@ impl Config {
 
     pub fn global_path(&self) -> PathBuf {
         self.root.join("global.md")
+    }
+
+    pub fn docs_dir(&self) -> PathBuf {
+        self.docs_dir.clone()
     }
 }

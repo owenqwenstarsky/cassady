@@ -18,7 +18,7 @@ struct FileArg {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "read".into(),
-        description: "Read one or more text files, optionally with 1-indexed line ranges like 35-60, 35-, or -60.".into(),
+        description: "Read one or more text files, optionally with 1-indexed line ranges like 35-60, 35-, or -60. In read-only mode, paths must stay inside the launch cwd or bundled docs directory.".into(),
         parameters: schema::object(json!({
             "files": {
                 "type":"array",
@@ -43,8 +43,7 @@ pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     }
     let mut out = String::new();
     for file in args.files {
-        let path =
-            super::path::resolve_existing(&file.path, &ctx.cwd, &ctx.read_only_root, ctx.mode)?;
+        let path = super::path::resolve_existing(&file.path, &ctx.cwd, &ctx.read_roots, ctx.mode)?;
         if !path.is_file() {
             bail!("not a file: {}", path.display());
         }

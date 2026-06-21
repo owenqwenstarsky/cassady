@@ -43,6 +43,8 @@ Optional config lives at `~/.cass/config.json`:
 
 Extra global instructions can be placed in `~/.cass/global.md`.
 
+Bundled documentation from this build is embedded into the binary and installed to `~/.cass/docs` on startup.
+
 ## Usage
 
 ```sh
@@ -79,8 +81,8 @@ Resume this chat with: cass --resume <id>
 
 ## Tools
 
-Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd`.
+Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd` and the bundled docs directory at `~/.cass/docs`.
 
-Full-access mode additionally allows `write` and `edit`. Mutating tools use atomic writes where practical: Cass writes to a temporary file first, then renames it into place after validation/write success.
+Full-access mode additionally allows `write` and `edit`. Mutating tools use atomic writes where practical: Cass writes to a temporary file first, then renames it into place after validation/write success. `write` and `edit` are always blocked under `~/.cass/docs`.
 
 There is no shell/bash tool in v1.

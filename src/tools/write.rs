@@ -15,7 +15,7 @@ struct Args {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "write".into(),
-        description: "Create or overwrite a text file. Requires full-access mode. Uses atomic temp-file-and-rename where practical.".into(),
+        description: "Create or overwrite a text file. Requires full-access mode. Writes under Cass bundled docs are blocked. Uses atomic temp-file-and-rename where practical.".into(),
         parameters: schema::object(json!({
             "path": {"type":"string"},
             "content": {"type":"string"}
@@ -25,7 +25,8 @@ pub fn spec() -> ToolSpec {
 
 pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     let args: Args = serde_json::from_value(args)?;
-    let path = super::path::resolve_for_write(&args.path, &ctx.cwd, ctx.mode)?;
+    let path =
+        super::path::resolve_for_write(&args.path, &ctx.cwd, ctx.mode, &ctx.blocked_write_roots)?;
     atomic_write(&path, args.content.as_bytes())?;
     Ok(format!(
         "wrote {} bytes to {}",

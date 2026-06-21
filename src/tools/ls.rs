@@ -16,7 +16,7 @@ fn default_path() -> String {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "ls".into(),
-        description: "List a directory. In read-only mode, paths must stay inside the launch cwd."
+        description: "List a directory. In read-only mode, paths must stay inside the launch cwd or bundled docs directory."
             .into(),
         parameters: schema::object(
             json!({
@@ -29,7 +29,7 @@ pub fn spec() -> ToolSpec {
 
 pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     let args: Args = serde_json::from_value(args)?;
-    let path = super::path::resolve_existing(&args.path, &ctx.cwd, &ctx.read_only_root, ctx.mode)?;
+    let path = super::path::resolve_existing(&args.path, &ctx.cwd, &ctx.read_roots, ctx.mode)?;
     if !path.is_dir() {
         bail!("not a directory: {}", path.display());
     }

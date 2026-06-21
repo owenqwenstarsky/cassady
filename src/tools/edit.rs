@@ -19,7 +19,7 @@ struct EditArg {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "edit".into(),
-        description: "Safely edit a file using exact old_text/new_text replacements. Every old_text must match exactly once in the original file. Requires full-access mode.".into(),
+        description: "Safely edit a file using exact old_text/new_text replacements. Every old_text must match exactly once in the original file. Requires full-access mode. Writes under Cass bundled docs are blocked.".into(),
         parameters: schema::object(json!({
             "path": {"type":"string"},
             "edits": {"type":"array", "items": {
@@ -40,7 +40,8 @@ pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     if args.edits.is_empty() {
         bail!("edit requires at least one replacement");
     }
-    let path = super::path::resolve_for_write(&args.path, &ctx.cwd, ctx.mode)?;
+    let path =
+        super::path::resolve_for_write(&args.path, &ctx.cwd, ctx.mode, &ctx.blocked_write_roots)?;
     let original = fs::read_to_string(&path)?;
     let mut ranges: Vec<(Range<usize>, &str)> = Vec::new();
     for edit in &args.edits {

@@ -24,6 +24,7 @@ pub fn build_effective_system_prompt(
     base: &str,
     mode: AccessMode,
     cwd: &Path,
+    docs_dir: &Path,
     model: &str,
     allowed_tools: &[String],
 ) -> String {
@@ -34,12 +35,16 @@ pub fn build_effective_system_prompt(
     prompt.push_str(&format!("Access mode: {}.\n", mode.as_str()));
     prompt.push_str(&format!("Launch working directory: {}.\n", cwd.display()));
     prompt.push_str(&format!(
+        "Bundled Cass docs directory: {}. This directory is read-only for tools. Use ls, read, and grep there when you need Cass documentation.\n",
+        docs_dir.display()
+    ));
+    prompt.push_str(&format!(
         "Allowed tools this turn: {}.\n\n",
         allowed_tools.join(", ")
     ));
     match mode {
-        AccessMode::ReadOnly => prompt.push_str("In read-only mode, you may inspect files with ls, read, and grep only inside the launch working directory. Do not request write or edit. If a task requires modification, explain what needs full-access mode.\n\n"),
-        AccessMode::FullAccess => prompt.push_str("In full-access mode, you may request ls, read, grep, write, and edit when needed. Cass does not restrict paths to the launch directory, but normal operating-system permissions still apply.\n\n"),
+        AccessMode::ReadOnly => prompt.push_str("In read-only mode, you may inspect files with ls, read, and grep only inside the launch working directory or bundled Cass docs directory. Do not request write or edit. If a task requires modification, explain what needs full-access mode.\n\n"),
+        AccessMode::FullAccess => prompt.push_str("In full-access mode, you may request ls, read, grep, write, and edit when needed. Cass does not restrict read paths to the launch directory, but normal operating-system permissions still apply. write and edit are still blocked under the bundled Cass docs directory.\n\n"),
     }
     prompt.push_str("6. Response behavior\n\nAssistant output is streamed to the user. Keep user-facing text direct and useful. Tool calls and results are visible to the user, so avoid claiming work happened until the relevant tool result confirms it.\n");
     prompt

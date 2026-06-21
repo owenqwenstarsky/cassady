@@ -23,7 +23,8 @@ pub struct ToolSpec {
 pub struct ToolContext {
     pub mode: AccessMode,
     pub cwd: PathBuf,
-    pub read_only_root: PathBuf,
+    pub read_roots: Vec<PathBuf>,
+    pub blocked_write_roots: Vec<PathBuf>,
     pub model_result_limit: usize,
 }
 
