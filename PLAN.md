@@ -333,9 +333,9 @@ The agent loop should follow this flow:
 4. Send context, system prompt, and allowed tools to the provider.
 5. Stream assistant text blocks line by line to the UI and append the final assistant message when complete.
 6. If the assistant emits tool calls, stream the tool call name and arguments to the UI, append the assistant tool-call message, execute each tool, stream each tool result under its call, append each result, and call the model again.
-7. Continue until a final assistant message is produced or a max tool-iteration limit is reached.
+7. Continue until a final assistant message is produced.
 
-Use a conservative max tool-iteration limit, such as 8 per user turn, to prevent runaway loops.
+Do not impose a fixed max tool-call or tool-iteration limit per user turn. If runaway behavior becomes a concern, address it with user cancellation or provider-level controls rather than an arbitrary per-turn cap.
 
 The agent should emit internal UI events rather than writing directly to the terminal. Example events:
 
@@ -504,7 +504,7 @@ Implement `ls`, `read`, `grep`, `write`, and `edit` with strong validation and t
 
 ### Milestone 3: Provider and agent loop
 
-Implement the provider abstraction, general OpenAI-compatible streaming provider with Fireworks defaults, message conversion, tool-call loop, max tool-iteration guard, context limiting, and system prompt generation.
+Implement the provider abstraction, general OpenAI-compatible streaming provider with Fireworks defaults, message conversion, unbounded tool-call loop, context limiting, and system prompt generation.
 
 ### Milestone 4: Terminal UI
 

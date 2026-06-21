@@ -66,7 +66,7 @@ pub async fn run_turn(
         model_result_limit: settings.config.model_tool_result_limit,
     };
 
-    for _ in 0..8 {
+    loop {
         let allowed = tools::available_tool_names(settings.mode);
         let system = prompt::build_effective_system_prompt(
             &conversation.base_system_prompt(),
