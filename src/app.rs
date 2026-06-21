@@ -103,6 +103,56 @@ async fn run_tui(
     let mut autofill_selected = 0usize;
 
     loop {
+        drain_agent_events(
+            &mut rx,
+            &mut AgentEventContext {
+                terminal: &terminal,
+                input: &input,
+                transcript: &mut transcript,
+                active_assistant: &mut active_assistant,
+                status: &mut status,
+                stick_to_bottom,
+                show_full_tools,
+                scroll: &mut scroll,
+            },
+        )?;
+
+        if handle.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
+            let h = handle.take().unwrap();
+            let result = h.await;
+            drain_agent_events(
+                &mut rx,
+                &mut AgentEventContext {
+                    terminal: &terminal,
+                    input: &input,
+                    transcript: &mut transcript,
+                    active_assistant: &mut active_assistant,
+                    status: &mut status,
+                    stick_to_bottom,
+                    show_full_tools,
+                    scroll: &mut scroll,
+                },
+            )?;
+            match result {
+                Ok(Ok(updated)) => {
+                    conversation = updated;
+                    ensure_final_assistant_visible(&mut transcript, &conversation);
+                }
+                Ok(Err(err)) => transcript.push(TranscriptBlock {
+                    kind: TranscriptKind::Error,
+                    title: "agent error".into(),
+                    content: err.to_string(),
+                }),
+                Err(err) => transcript.push(TranscriptBlock {
+                    kind: TranscriptKind::Error,
+                    title: "agent task error".into(),
+                    content: err.to_string(),
+                }),
+            }
+            active_assistant = None;
+            status = "idle".into();
+        }
+
         let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
         autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
         scroll = if stick_to_bottom {
@@ -130,104 +180,6 @@ async fn run_tui(
                 },
             )
         })?;
-
-        while let Ok(event) = rx.try_recv() {
-            match event {
-                AgentEvent::AssistantChunk(s) => {
-                    if active_assistant.is_none() && s.trim().is_empty() {
-                        continue;
-                    }
-                    let idx = match active_assistant {
-                        Some(i) => i,
-                        None => {
-                            transcript.push(TranscriptBlock {
-                                kind: TranscriptKind::Assistant,
-                                title: "response".into(),
-                                content: String::new(),
-                            });
-                            let i = transcript.len() - 1;
-                            active_assistant = Some(i);
-                            i
-                        }
-                    };
-                    transcript[idx].content.push_str(&s);
-                    if stick_to_bottom {
-                        scroll = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                    }
-                }
-                AgentEvent::ToolCallStarted {
-                    id,
-                    name,
-                    arguments,
-                } => {
-                    active_assistant = None;
-                    transcript.push(TranscriptBlock {
-                        kind: TranscriptKind::Tool,
-                        title: format!("call: {name} ({})", short_call_id(&id)),
-                        content: serde_json::to_string_pretty(&arguments)
-                            .unwrap_or_else(|_| arguments.to_string()),
-                    });
-                    if stick_to_bottom {
-                        scroll = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                    }
-                }
-                AgentEvent::ToolResult {
-                    id,
-                    name,
-                    ok,
-                    content,
-                } => {
-                    transcript.push(TranscriptBlock {
-                        kind: if ok {
-                            TranscriptKind::Tool
-                        } else {
-                            TranscriptKind::Error
-                        },
-                        title: format!(
-                            "result: {name} {} ({})",
-                            if ok { "✓" } else { "✗" },
-                            short_call_id(&id)
-                        ),
-                        content,
-                    });
-                    if stick_to_bottom {
-                        scroll = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                    }
-                }
-                AgentEvent::Status(s) => {
-                    transcript.push(TranscriptBlock {
-                        kind: TranscriptKind::Status,
-                        title: "status".into(),
-                        content: s,
-                    });
-                    if stick_to_bottom {
-                        scroll = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                    }
-                }
-                AgentEvent::TurnFinished => {
-                    active_assistant = None;
-                    status = "turn finished".into();
-                }
-            }
-        }
-
-        if handle.as_ref().map(|h| h.is_finished()).unwrap_or(false) {
-            let h = handle.take().unwrap();
-            match h.await {
-                Ok(Ok(updated)) => conversation = updated,
-                Ok(Err(err)) => transcript.push(TranscriptBlock {
-                    kind: TranscriptKind::Error,
-                    title: "agent error".into(),
-                    content: err.to_string(),
-                }),
-                Err(err) => transcript.push(TranscriptBlock {
-                    kind: TranscriptKind::Error,
-                    title: "agent task error".into(),
-                    content: err.to_string(),
-                }),
-            }
-            status = "idle".into();
-        }
 
         if let Some(event) = poll_event(Duration::from_millis(40))? {
             match event {
@@ -495,6 +447,147 @@ async fn run_tui(
             last_ctrl_c = None;
         }
     }
+}
+
+struct AgentEventContext<'a> {
+    terminal: &'a terminal::CassTerminal,
+    input: &'a str,
+    transcript: &'a mut Vec<TranscriptBlock>,
+    active_assistant: &'a mut Option<usize>,
+    status: &'a mut String,
+    stick_to_bottom: bool,
+    show_full_tools: bool,
+    scroll: &'a mut u16,
+}
+
+fn drain_agent_events(
+    rx: &mut mpsc::UnboundedReceiver<AgentEvent>,
+    ctx: &mut AgentEventContext<'_>,
+) -> Result<()> {
+    while let Ok(event) = rx.try_recv() {
+        apply_agent_event(event, ctx)?;
+    }
+    Ok(())
+}
+
+fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Result<()> {
+    match event {
+        AgentEvent::AssistantChunk(s) => {
+            if ctx.active_assistant.is_none() && s.trim().is_empty() {
+                return Ok(());
+            }
+            let idx = match *ctx.active_assistant {
+                Some(i) => i,
+                None => {
+                    ctx.transcript.push(TranscriptBlock {
+                        kind: TranscriptKind::Assistant,
+                        title: "response".into(),
+                        content: String::new(),
+                    });
+                    let i = ctx.transcript.len() - 1;
+                    *ctx.active_assistant = Some(i);
+                    i
+                }
+            };
+            ctx.transcript[idx].content.push_str(&s);
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::ToolCallStarted {
+            id,
+            name,
+            arguments,
+        } => {
+            *ctx.active_assistant = None;
+            ctx.transcript.push(TranscriptBlock {
+                kind: TranscriptKind::Tool,
+                title: format!("call: {name} ({})", short_call_id(&id)),
+                content: serde_json::to_string_pretty(&arguments)
+                    .unwrap_or_else(|_| arguments.to_string()),
+            });
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::ToolResult {
+            id,
+            name,
+            ok,
+            content,
+        } => {
+            ctx.transcript.push(TranscriptBlock {
+                kind: if ok {
+                    TranscriptKind::Tool
+                } else {
+                    TranscriptKind::Error
+                },
+                title: format!(
+                    "result: {name} {} ({})",
+                    if ok { "✓" } else { "✗" },
+                    short_call_id(&id)
+                ),
+                content,
+            });
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::Status(s) => {
+            ctx.transcript.push(TranscriptBlock {
+                kind: TranscriptKind::Status,
+                title: "status".into(),
+                content: s,
+            });
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::TurnFinished => {
+            *ctx.active_assistant = None;
+            *ctx.status = "turn finished".into();
+        }
+    }
+    Ok(())
+}
+
+fn update_bottom_scroll(ctx: &mut AgentEventContext<'_>) -> Result<()> {
+    if ctx.stick_to_bottom {
+        *ctx.scroll = bottom_scroll(ctx.terminal, ctx.input, ctx.transcript, ctx.show_full_tools)?;
+    }
+    Ok(())
+}
+
+fn ensure_final_assistant_visible(
+    transcript: &mut Vec<TranscriptBlock>,
+    conversation: &Conversation,
+) -> bool {
+    let Some(content) = conversation.records.last().and_then(|record| match record {
+        conversation::Record::Assistant {
+            content,
+            tool_calls,
+            ..
+        } if tool_calls.is_empty() && !content.trim().is_empty() => Some(content),
+        _ => None,
+    }) else {
+        return false;
+    };
+
+    if let Some(last) = transcript.last_mut() {
+        if matches!(last.kind, TranscriptKind::Assistant) {
+            if assistant_content_matches(&last.content, content) {
+                return false;
+            }
+            if content.trim_start().starts_with(last.content.trim_start()) {
+                last.content = content.clone();
+                return true;
+            }
+            return false;
+        }
+    }
+
+    transcript.push(TranscriptBlock {
+        kind: TranscriptKind::Assistant,
+        title: "response".into(),
+        content: content.clone(),
+    });
+    true
+}
+
+fn assistant_content_matches(a: &str, b: &str) -> bool {
+    a == b || (!a.trim().is_empty() && a.trim() == b.trim())
 }
 
 #[derive(Debug, Clone)]
@@ -901,9 +994,11 @@ mod tests {
     fn config_with_models(models_json: &str) -> (tempfile::TempDir, Config) {
         let root = tempdir().unwrap();
         std::fs::write(root.path().join("models.json"), models_json).unwrap();
-        let mut config = Config::default();
-        config.root = root.path().to_path_buf();
-        config.model = "alpha-model".to_string();
+        let config = Config {
+            root: root.path().to_path_buf(),
+            model: "alpha-model".to_string(),
+            ..Config::default()
+        };
         (root, config)
     }
 
@@ -961,5 +1056,60 @@ mod tests {
         assert!(model_autofill("/model alpha-model", 0, &config)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn ensure_final_assistant_visible_appends_missing_final() {
+        let conversation = Conversation {
+            id: "chat".into(),
+            path: PathBuf::new(),
+            records: vec![conversation::Record::Assistant {
+                content: "Done.".into(),
+                tool_calls: Vec::new(),
+                ts: "now".into(),
+            }],
+        };
+        let mut transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "result: read ✓ (call_1)".into(),
+            content: "ok".into(),
+        }];
+
+        assert!(ensure_final_assistant_visible(
+            &mut transcript,
+            &conversation
+        ));
+        assert!(matches!(
+            transcript.last(),
+            Some(TranscriptBlock {
+                kind: TranscriptKind::Assistant,
+                content,
+                ..
+            }) if content == "Done."
+        ));
+    }
+
+    #[test]
+    fn ensure_final_assistant_visible_does_not_duplicate_streamed_final() {
+        let conversation = Conversation {
+            id: "chat".into(),
+            path: PathBuf::new(),
+            records: vec![conversation::Record::Assistant {
+                content: "\nDone.".into(),
+                tool_calls: Vec::new(),
+                ts: "now".into(),
+            }],
+        };
+        let mut transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Assistant,
+            title: "response".into(),
+            content: "Done.".into(),
+        }];
+
+        assert!(!ensure_final_assistant_visible(
+            &mut transcript,
+            &conversation
+        ));
+        assert_eq!(transcript.len(), 1);
     }
 }

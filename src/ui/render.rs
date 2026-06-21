@@ -91,12 +91,12 @@ pub fn max_transcript_scroll(
     area: Rect,
 ) -> u16 {
     // Paragraph::scroll is measured in rendered rows, not logical lines. Long
-    // tool output and assistant messages wrap, so count the wrapped rows when
-    // deciding where the bottom of the transcript is.
+    // tool output and assistant messages wrap, so count rows with the same
+    // word-wrapping behavior ratatui uses for Paragraph::wrap(trim: false).
     let content_width = area.width.saturating_sub(2).max(1) as usize;
     let row_count = transcript_lines_from(transcript, show_full_tools)
         .iter()
-        .map(|line| wrapped_row_count(&line.to_string(), content_width))
+        .map(|line| ratatui_wrapped_row_count(&line.to_string(), content_width))
         .sum::<usize>();
     let viewport_rows = area.height.saturating_sub(2) as usize;
     row_count
@@ -215,107 +215,101 @@ fn transcript_lines_from(
     lines
 }
 
-fn wrapped_row_count(line: &str, content_width: usize) -> usize {
-    let content_width = content_width.max(1);
-    if line.is_empty() {
-        return 1;
-    }
-
-    let mut rows = 1usize;
-    let mut col = 0usize;
-    let mut token_is_whitespace: Option<bool> = None;
-    let mut token_width = 0usize;
+fn ratatui_wrapped_row_count(line: &str, content_width: usize) -> usize {
+    // This mirrors ratatui's WordWrapper::process_input for Wrap { trim: false }
+    // closely enough for scroll bounds. Details like whitespace-only wrapped
+    // lines matter: if we undercount rows, the scroll bottom stops before the
+    // final assistant message even though it is present in the transcript.
+    let max_width = content_width.max(1);
+    let mut rows = 0usize;
+    let mut pending_line_has_symbols = false;
+    let mut line_width = 0usize;
+    let mut word_width = 0usize;
+    let mut word_symbols = 0usize;
+    let mut whitespace_width = 0usize;
+    let mut whitespace_symbols = 0usize;
+    let mut pending_whitespace = std::collections::VecDeque::new();
+    let mut non_whitespace_previous = false;
 
     for ch in line.chars() {
-        let is_whitespace = ch.is_whitespace();
-        if token_is_whitespace.is_some_and(|current| current != is_whitespace) {
-            append_wrapped_token(
-                token_width,
-                token_is_whitespace.unwrap(),
-                content_width,
-                &mut rows,
-                &mut col,
-            );
-            token_width = 0;
+        let symbol_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if symbol_width > max_width {
+            continue;
         }
-        token_is_whitespace = Some(is_whitespace);
-        token_width = token_width.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0));
+        let is_whitespace = ch.is_whitespace();
+        let word_found = non_whitespace_previous && is_whitespace;
+        let untrimmed_overflow = !pending_line_has_symbols
+            && word_width
+                .saturating_add(whitespace_width)
+                .saturating_add(symbol_width)
+                > max_width;
+
+        if word_found || untrimmed_overflow {
+            if whitespace_symbols > 0 {
+                pending_line_has_symbols = true;
+                line_width = line_width.saturating_add(whitespace_width);
+            }
+            if word_symbols > 0 {
+                pending_line_has_symbols = true;
+                line_width = line_width.saturating_add(word_width);
+            }
+            pending_whitespace.clear();
+            whitespace_width = 0;
+            whitespace_symbols = 0;
+            word_width = 0;
+            word_symbols = 0;
+        }
+
+        let line_full = line_width >= max_width;
+        let pending_word_overflow = symbol_width > 0
+            && line_width
+                .saturating_add(whitespace_width)
+                .saturating_add(word_width)
+                >= max_width;
+
+        if line_full || pending_word_overflow {
+            rows = rows.saturating_add(1);
+            let mut remaining_width = max_width.saturating_sub(line_width);
+            line_width = 0;
+            pending_line_has_symbols = false;
+
+            while let Some(width) = pending_whitespace.front().copied() {
+                if width > remaining_width {
+                    break;
+                }
+                whitespace_width = whitespace_width.saturating_sub(width);
+                whitespace_symbols = whitespace_symbols.saturating_sub(1);
+                remaining_width = remaining_width.saturating_sub(width);
+                pending_whitespace.pop_front();
+            }
+
+            if is_whitespace && pending_whitespace.is_empty() {
+                continue;
+            }
+        }
+
+        if is_whitespace {
+            whitespace_width = whitespace_width.saturating_add(symbol_width);
+            whitespace_symbols = whitespace_symbols.saturating_add(1);
+            pending_whitespace.push_back(symbol_width);
+        } else {
+            word_width = word_width.saturating_add(symbol_width);
+            word_symbols = word_symbols.saturating_add(1);
+        }
+
+        non_whitespace_previous = !is_whitespace;
     }
 
-    if let Some(is_whitespace) = token_is_whitespace {
-        append_wrapped_token(
-            token_width,
-            is_whitespace,
-            content_width,
-            &mut rows,
-            &mut col,
-        );
+    if !pending_line_has_symbols && word_symbols == 0 && whitespace_symbols > 0 {
+        rows = rows.saturating_add(1);
     }
-
-    rows
-}
-
-fn append_wrapped_token(
-    token_width: usize,
-    is_whitespace: bool,
-    content_width: usize,
-    rows: &mut usize,
-    col: &mut usize,
-) {
-    if token_width == 0 {
-        return;
+    if whitespace_symbols > 0 || word_symbols > 0 {
+        pending_line_has_symbols = true;
     }
-
-    if !is_whitespace && *col > 0 && col.saturating_add(token_width) > content_width {
-        *rows = rows.saturating_add(1);
-        *col = 0;
-        append_hard_wrapped(token_width, content_width, rows, col);
-    } else {
-        append_hard_wrapped_from_current(token_width, content_width, rows, col);
+    if pending_line_has_symbols {
+        rows = rows.saturating_add(1);
     }
-}
-
-fn append_hard_wrapped_from_current(
-    token_width: usize,
-    content_width: usize,
-    rows: &mut usize,
-    col: &mut usize,
-) {
-    if *col == 0 {
-        append_hard_wrapped(token_width, content_width, rows, col);
-        return;
-    }
-
-    let available = content_width.saturating_sub(*col);
-    if token_width <= available {
-        *col = col.saturating_add(token_width);
-    } else {
-        *rows = rows.saturating_add(1);
-        *col = 0;
-        append_hard_wrapped(
-            token_width.saturating_sub(available),
-            content_width,
-            rows,
-            col,
-        );
-    }
-}
-
-fn append_hard_wrapped(
-    token_width: usize,
-    content_width: usize,
-    rows: &mut usize,
-    col: &mut usize,
-) {
-    let full_rows = token_width / content_width;
-    let remainder = token_width % content_width;
-    if remainder == 0 {
-        *rows = rows.saturating_add(full_rows.saturating_sub(1));
-        *col = content_width;
-    } else {
-        *rows = rows.saturating_add(full_rows);
-        *col = remainder;
-    }
+    rows.max(1)
 }
 
 fn style_for(kind: &TranscriptKind) -> Style {
@@ -481,5 +475,29 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
 
         assert_eq!(max_transcript_scroll(&transcript, false, area), 0);
+    }
+
+    #[test]
+    fn max_scroll_counts_whitespace_only_render_rows() {
+        let content = (0..60)
+            .map(|i| if i % 2 == 0 { "x" } else { "" })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let transcript = vec![
+            TranscriptBlock {
+                kind: TranscriptKind::Tool,
+                title: "result: read ✓ (call_1)".into(),
+                content,
+            },
+            TranscriptBlock {
+                kind: TranscriptKind::Assistant,
+                title: "response".into(),
+                content: "Done.".into(),
+            },
+        ];
+        let area = Rect::new(0, 0, 80, 5);
+        let max = max_transcript_scroll(&transcript, false, area);
+
+        assert!(max > 80, "max scroll too low: {max}");
     }
 }

@@ -1,17 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AccessMode {
+    #[default]
     ReadOnly,
     FullAccess,
-}
-
-impl Default for AccessMode {
-    fn default() -> Self {
-        Self::ReadOnly
-    }
 }
 
 impl AccessMode {

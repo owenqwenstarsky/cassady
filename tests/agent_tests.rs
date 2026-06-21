@@ -39,12 +39,17 @@ async fn empty_final_response_is_reprompted_and_persisted() {
     let root = tempdir().unwrap();
     let cwd = tempdir().unwrap();
     let docs = tempdir().unwrap();
-    let mut config = Config::default();
-    config.root = root.path().to_path_buf();
-    config.docs_dir = docs.path().to_path_buf();
-    config.model = "test-model".into();
-    config.active_provider.base_url = server.uri();
-    config.active_provider.api_key = "test-key".into();
+    let config = Config {
+        root: root.path().to_path_buf(),
+        docs_dir: docs.path().to_path_buf(),
+        model: "test-model".into(),
+        active_provider: cassady::config::ResolvedProviderConfig {
+            base_url: server.uri(),
+            api_key: "test-key".into(),
+            ..Config::default().active_provider
+        },
+        ..Config::default()
+    };
 
     let conversation = Conversation::create(
         &config.conversations_dir(),

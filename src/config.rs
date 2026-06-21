@@ -173,9 +173,11 @@ impl Config {
         let models = load_or_create_default_model_registry(&root)?;
         let file = load_config_file(&root)?;
 
-        let mut cfg = Config::default();
-        cfg.root = root.clone();
-        cfg.docs_dir = docs_dir;
+        let mut cfg = Config {
+            root: root.clone(),
+            docs_dir,
+            ..Config::default()
+        };
 
         if let Some(file) = &file {
             if let Some(v) = file.default_access_mode {
