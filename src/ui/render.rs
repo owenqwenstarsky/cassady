@@ -1,8 +1,9 @@
 use crate::access::AccessMode;
+use crate::ui::autofill::AutoFillMenu;
 use crate::ui::theme;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::path::Path;
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ pub struct RenderState<'a> {
     pub busy: bool,
     pub show_full_tools: bool,
     pub scroll: u16,
+    pub autofill: Option<&'a AutoFillMenu>,
 }
 
 pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
@@ -64,9 +66,13 @@ pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
         .wrap(Wrap { trim: false });
     f.render_widget(input, chunks[2]);
 
+    if let Some(menu) = state.autofill {
+        render_autofill_menu(f, chunks[1], menu);
+    }
+
     let footer = truncate_end(
         &format!(
-            " Shift-Tab mode | Enter send | Ctrl-J newline | Ctrl-O tools | wheel/PgUp/PgDn scroll | Ctrl-C twice exit  {}",
+            " / commands | Shift-Tab mode | Tab/Enter fill | Enter send | Ctrl-J newline | Ctrl-O tools | scroll PgUp/PgDn/wheel | Ctrl-C twice exit  {}",
             state.status
         ),
         chunks[3].width as usize,
@@ -88,6 +94,71 @@ pub fn max_transcript_scroll(
     row_count
         .saturating_sub(viewport_rows)
         .min(u16::MAX as usize) as u16
+}
+
+fn render_autofill_menu(f: &mut Frame<'_>, transcript_area: Rect, menu: &AutoFillMenu) {
+    if menu.items.is_empty() || transcript_area.height < 3 {
+        return;
+    }
+
+    let visible_items = menu
+        .items
+        .len()
+        .min(6)
+        .min(transcript_area.height as usize - 2);
+    if visible_items == 0 {
+        return;
+    }
+
+    let height = visible_items as u16 + 2;
+    let area = Rect::new(
+        transcript_area.x,
+        transcript_area.y + transcript_area.height.saturating_sub(height),
+        transcript_area.width,
+        height,
+    );
+    let selected = menu.selected_index().unwrap_or(0);
+    let start = if selected >= visible_items {
+        selected + 1 - visible_items
+    } else {
+        0
+    };
+    let end = (start + visible_items).min(menu.items.len());
+    let line_width = area.width.saturating_sub(2) as usize;
+    let mut lines = Vec::new();
+
+    for idx in start..end {
+        let item = &menu.items[idx];
+        let marker = if idx == selected { "›" } else { " " };
+        let mut text = format!("{marker} {}", item.label);
+        if let Some(detail) = &item.detail {
+            text.push_str("  ");
+            text.push_str(detail);
+        }
+        let style = if idx == selected {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+        lines.push(Line::styled(truncate_end(&text, line_width), style));
+    }
+
+    let title = format!(
+        " {} {}/{} ",
+        menu.title,
+        selected.saturating_add(1),
+        menu.items.len()
+    );
+    let menu = Paragraph::new(Text::from(lines)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(truncate_end(&title, area.width as usize)),
+    );
+    f.render_widget(Clear, area);
+    f.render_widget(menu, area);
 }
 
 fn main_layout(area: Rect, input: &str) -> std::rc::Rc<[Rect]> {

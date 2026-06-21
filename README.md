@@ -55,12 +55,21 @@ cass --resume
 
 ## Keys
 
-- `Enter`: send message
+- Type `/`: show command autocomplete
+- `Up`/`Down`: move through an autocomplete menu
+- `Tab`/`Enter`: fill autocomplete selection
+- `Enter`: send message / run command when no autocomplete menu is open
 - `Ctrl-J`: insert newline
 - `Shift-Tab`: toggle read-only/full-access mode while idle
 - `Ctrl-O`: toggle truncated/full tool output display
 - `PageUp`/`PageDown` or mouse wheel: transcript scroll
 - `Ctrl-C` twice within 1.5 seconds: exit
+
+## Commands
+
+- `/model <model>`: switch the model for future turns
+- `/resume <chat>`: resume a saved chat; chat autocomplete lists chats for the current directory
+- `/status`: show current chat status
 
 On exit Cass prints:
 

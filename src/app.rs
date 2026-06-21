@@ -3,13 +3,14 @@ use crate::cli;
 use crate::config::Config;
 use crate::conversation::{self, Conversation};
 use crate::prompt;
+use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
 use crate::ui::events::poll_event;
 use crate::ui::render::{self, TranscriptBlock, TranscriptKind};
 use crate::ui::terminal;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -63,7 +64,7 @@ fn list_chats(config: &Config, cwd: &std::path::Path) -> Result<()> {
 }
 
 async fn run_tui(
-    config: Config,
+    mut config: Config,
     cwd: PathBuf,
     mut conversation: Conversation,
     warning: Option<String>,
@@ -89,9 +90,12 @@ async fn run_tui(
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
     let mut active_assistant: Option<usize> = None;
     let mut stick_to_bottom = true;
-    let chat_id = conversation.id.clone();
+    let mut chat_id = conversation.id.clone();
+    let mut autofill_selected = 0usize;
 
     loop {
+        let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
+        autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
         scroll = clamp_scroll(&terminal, &input, &transcript, show_full_tools, scroll)?;
 
         terminal.draw(|f| {
@@ -109,6 +113,7 @@ async fn run_tui(
                     busy: handle.is_some(),
                     show_full_tools,
                     scroll,
+                    autofill: autofill.as_ref(),
                 },
             )
         })?;
@@ -219,6 +224,7 @@ async fn run_tui(
                         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
                             let now = Instant::now();
                             input.clear();
+                            autofill_selected = 0;
                             if last_ctrl_c
                                 .map(|t| now.duration_since(t) <= Duration::from_millis(1500))
                                 .unwrap_or(false)
@@ -236,6 +242,14 @@ async fn run_tui(
                             } else {
                                 mode = mode.toggle();
                                 status = format!("mode: {mode}");
+                            }
+                        }
+                        (KeyCode::Tab, _) => {
+                            if let Some(menu) = &autofill {
+                                if let Some(next_input) = menu.apply(&input) {
+                                    input = next_input;
+                                    autofill_selected = 0;
+                                }
                             }
                         }
                         (KeyCode::Char('o'), m) if m.contains(KeyModifiers::CONTROL) => {
@@ -259,19 +273,129 @@ async fn run_tui(
                             .into();
                         }
                         (KeyCode::Char('j'), m) if m.contains(KeyModifiers::CONTROL) => {
-                            input.push('\n')
+                            input.push('\n');
+                            autofill_selected = 0;
                         }
                         (KeyCode::Enter, m) if m.contains(KeyModifiers::CONTROL) => {
-                            input.push('\n')
+                            input.push('\n');
+                            autofill_selected = 0;
                         }
                         (KeyCode::Enter, _) => {
-                            if busy {
-                                status = "agent is still running".into();
+                            if let Some(menu) = &autofill {
+                                if let Some(next_input) = menu.apply(&input) {
+                                    input = next_input;
+                                    autofill_selected = 0;
+                                }
                             } else if input.trim().is_empty() {
                                 input.clear();
+                            } else if input.trim_start().starts_with('/') {
+                                match parse_local_command(&input) {
+                                    Ok(LocalCommand::Status) => {
+                                        let content = chat_status(
+                                            &chat_id,
+                                            &config.model,
+                                            mode,
+                                            &cwd,
+                                            busy,
+                                            &status,
+                                            conversation.records.len(),
+                                        );
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        transcript.push(TranscriptBlock {
+                                            kind: TranscriptKind::Status,
+                                            title: "status".into(),
+                                            content,
+                                        });
+                                        status = "status shown".into();
+                                        if stick_to_bottom {
+                                            scroll = bottom_scroll(
+                                                &terminal,
+                                                &input,
+                                                &transcript,
+                                                show_full_tools,
+                                            )?;
+                                        }
+                                    }
+                                    Ok(LocalCommand::Model(model)) => {
+                                        if busy {
+                                            status = "model can be changed when idle".into();
+                                        } else {
+                                            config.model = model.clone();
+                                            input.clear();
+                                            autofill_selected = 0;
+                                            transcript.push(TranscriptBlock {
+                                                kind: TranscriptKind::Status,
+                                                title: "model".into(),
+                                                content: format!("model changed to {model}"),
+                                            });
+                                            status = format!("model: {model}");
+                                            if stick_to_bottom {
+                                                scroll = bottom_scroll(
+                                                    &terminal,
+                                                    &input,
+                                                    &transcript,
+                                                    show_full_tools,
+                                                )?;
+                                            }
+                                        }
+                                    }
+                                    Ok(LocalCommand::Resume(id)) => {
+                                        if busy {
+                                            status = "chat can be resumed when idle".into();
+                                        } else {
+                                            match Conversation::load(
+                                                &config.conversations_dir(),
+                                                &id,
+                                            ) {
+                                                Ok((loaded, warning)) => {
+                                                    conversation = loaded;
+                                                    chat_id = conversation.id.clone();
+                                                    transcript = transcript_from_loaded(
+                                                        &conversation,
+                                                        warning,
+                                                    );
+                                                    input.clear();
+                                                    autofill_selected = 0;
+                                                    active_assistant = None;
+                                                    status = format!("resumed chat {chat_id}");
+                                                    stick_to_bottom = true;
+                                                    scroll = bottom_scroll(
+                                                        &terminal,
+                                                        &input,
+                                                        &transcript,
+                                                        show_full_tools,
+                                                    )?;
+                                                }
+                                                Err(err) => {
+                                                    status = format!("resume failed: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "resume".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                    if stick_to_bottom {
+                                                        scroll = bottom_scroll(
+                                                            &terminal,
+                                                            &input,
+                                                            &transcript,
+                                                            show_full_tools,
+                                                        )?;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        status = err;
+                                    }
+                                }
+                            } else if busy {
+                                status = "agent is still running".into();
                             } else {
                                 let msg = input.trim_end().to_string();
                                 input.clear();
+                                autofill_selected = 0;
                                 transcript.push(TranscriptBlock {
                                     kind: TranscriptKind::User,
                                     title: "message".into(),
@@ -296,6 +420,17 @@ async fn run_tui(
                         }
                         (KeyCode::Backspace, _) => {
                             input.pop();
+                            autofill_selected = 0;
+                        }
+                        (KeyCode::Up, _) => {
+                            if let Some(menu) = &autofill {
+                                autofill_selected = menu.previous_index();
+                            }
+                        }
+                        (KeyCode::Down, _) => {
+                            if let Some(menu) = &autofill {
+                                autofill_selected = menu.next_index();
+                            }
                         }
                         (KeyCode::PageUp, _) => {
                             scroll = scroll.saturating_sub(10);
@@ -311,7 +446,8 @@ async fn run_tui(
                             if !m.contains(KeyModifiers::CONTROL)
                                 && !m.contains(KeyModifiers::ALT) =>
                         {
-                            input.push(ch)
+                            input.push(ch);
+                            autofill_selected = 0;
                         }
                         _ => {}
                     }
@@ -346,6 +482,222 @@ async fn run_tui(
             last_ctrl_c = None;
         }
     }
+}
+
+#[derive(Debug, Clone)]
+enum LocalCommand {
+    Model(String),
+    Resume(String),
+    Status,
+}
+
+struct CommandSpec {
+    name: &'static str,
+    usage: &'static str,
+    description: &'static str,
+    takes_value: bool,
+}
+
+const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "model",
+        usage: "/model <model>",
+        description: "switch the model for future turns",
+        takes_value: true,
+    },
+    CommandSpec {
+        name: "resume",
+        usage: "/resume <chat>",
+        description: "resume a chat from this directory",
+        takes_value: true,
+    },
+    CommandSpec {
+        name: "status",
+        usage: "/status",
+        description: "show chat status",
+        takes_value: false,
+    },
+];
+
+fn build_autofill(
+    input: &str,
+    selected: usize,
+    config: &Config,
+    cwd: &Path,
+) -> Result<Option<AutoFillMenu>> {
+    if input.contains('\n') || !input.starts_with('/') {
+        return Ok(None);
+    }
+
+    if let Some(menu) = command_autofill(input, selected) {
+        return Ok(Some(menu));
+    }
+
+    resume_chat_autofill(input, selected, config, cwd)
+}
+
+fn command_autofill(input: &str, selected: usize) -> Option<AutoFillMenu> {
+    if !input.starts_with('/') || input[1..].chars().any(char::is_whitespace) {
+        return None;
+    }
+    if input == "/status" {
+        return None;
+    }
+
+    let query = input[1..].to_ascii_lowercase();
+    let mut items = Vec::new();
+    for spec in COMMANDS {
+        if spec.name.starts_with(&query) || spec.usage[1..].starts_with(&query) {
+            let insert = if spec.takes_value {
+                format!("/{} ", spec.name)
+            } else {
+                format!("/{}", spec.name)
+            };
+            items.push(
+                AutoFillItem::new(spec.usage, insert).with_detail(spec.description.to_string()),
+            );
+        }
+    }
+
+    if items.is_empty() {
+        None
+    } else {
+        Some(AutoFillMenu::new("Commands", 0, input.len(), items).with_selected(selected))
+    }
+}
+
+fn resume_chat_autofill(
+    input: &str,
+    selected: usize,
+    config: &Config,
+    cwd: &Path,
+) -> Result<Option<AutoFillMenu>> {
+    let Some(rest) = input.strip_prefix("/resume") else {
+        return Ok(None);
+    };
+    if rest.is_empty() || !rest.chars().next().is_some_and(|c| c.is_whitespace()) {
+        return Ok(None);
+    }
+
+    let arg = rest.trim_start_matches(char::is_whitespace);
+    if arg.chars().any(char::is_whitespace) {
+        return Ok(None);
+    }
+    let replacement_start = input.len() - arg.len();
+    let query = arg.to_ascii_lowercase();
+
+    let chats = conversation::list_chats(&config.conversations_dir(), cwd)?;
+    if !arg.is_empty() && chats.iter().any(|chat| chat.id == arg) {
+        return Ok(None);
+    }
+
+    let mut items = Vec::new();
+    for chat in chats {
+        if chat_matches(&chat, &query) {
+            let detail = chat_detail(&chat);
+            items.push(AutoFillItem::new(chat.id.clone(), chat.id).with_detail(detail));
+        }
+    }
+
+    if items.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(
+            AutoFillMenu::new("Chats", replacement_start, input.len(), items)
+                .with_selected(selected),
+        ))
+    }
+}
+
+fn chat_matches(chat: &conversation::ChatSummary, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    chat.id.to_ascii_lowercase().contains(query)
+        || chat.created_at.to_ascii_lowercase().contains(query)
+        || chat.model.to_ascii_lowercase().contains(query)
+        || chat.first_user_preview.to_ascii_lowercase().contains(query)
+}
+
+fn chat_detail(chat: &conversation::ChatSummary) -> String {
+    let mut parts = vec![chat.created_at.clone(), short_model_name(&chat.model)];
+    if !chat.first_user_preview.is_empty() {
+        parts.push(chat.first_user_preview.clone());
+    }
+    parts.join(" · ")
+}
+
+fn short_model_name(model: &str) -> String {
+    model.rsplit('/').next().unwrap_or(model).to_string()
+}
+
+fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String> {
+    let trimmed = input.trim();
+    let mut parts = trimmed.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Err("empty command".into());
+    };
+
+    match command {
+        "/model" => {
+            let Some(model) = parts.next() else {
+                return Err("usage: /model <model>".into());
+            };
+            if parts.next().is_some() {
+                return Err("usage: /model <model>".into());
+            }
+            Ok(LocalCommand::Model(model.to_string()))
+        }
+        "/resume" => {
+            let Some(chat) = parts.next() else {
+                return Err("usage: /resume <chat>".into());
+            };
+            if parts.next().is_some() {
+                return Err("usage: /resume <chat>".into());
+            }
+            Ok(LocalCommand::Resume(chat.to_string()))
+        }
+        "/status" => {
+            if parts.next().is_some() {
+                return Err("usage: /status".into());
+            }
+            Ok(LocalCommand::Status)
+        }
+        other => Err(format!("unknown command: {other}")),
+    }
+}
+
+fn chat_status(
+    chat_id: &str,
+    model: &str,
+    mode: crate::access::AccessMode,
+    cwd: &Path,
+    busy: bool,
+    status: &str,
+    record_count: usize,
+) -> String {
+    format!(
+        "chat: {chat_id}\nstate: {}\nmodel: {model}\nmode: {mode}\ncwd: {}\nrecords: {record_count}\nstatus: {}",
+        if busy { "running" } else { "idle" },
+        cwd.display(),
+        if status.is_empty() { "idle" } else { status }
+    )
+}
+
+fn transcript_from_loaded(
+    conversation: &Conversation,
+    warning: Option<String>,
+) -> Vec<TranscriptBlock> {
+    let mut blocks = Vec::new();
+    if let Some(w) = warning {
+        blocks.push(TranscriptBlock {
+            kind: TranscriptKind::Error,
+            title: "warning".into(),
+            content: w,
+        });
+    }
+    blocks.extend(blocks_from_conversation(conversation));
+    blocks
 }
 
 fn short_call_id(id: &str) -> String {
