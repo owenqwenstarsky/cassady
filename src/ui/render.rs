@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::path::Path;
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone)]
 pub enum TranscriptKind {
@@ -89,7 +90,14 @@ pub fn max_transcript_scroll(
     show_full_tools: bool,
     area: Rect,
 ) -> u16 {
-    let row_count = transcript_lines_from(transcript, show_full_tools).len();
+    // Paragraph::scroll is measured in rendered rows, not logical lines. Long
+    // tool output and assistant messages wrap, so count the wrapped rows when
+    // deciding where the bottom of the transcript is.
+    let content_width = area.width.saturating_sub(2).max(1) as usize;
+    let row_count = transcript_lines_from(transcript, show_full_tools)
+        .iter()
+        .map(|line| wrapped_row_count(&line.to_string(), content_width))
+        .sum::<usize>();
     let viewport_rows = area.height.saturating_sub(2) as usize;
     row_count
         .saturating_sub(viewport_rows)
@@ -205,6 +213,109 @@ fn transcript_lines_from(
         ));
     }
     lines
+}
+
+fn wrapped_row_count(line: &str, content_width: usize) -> usize {
+    let content_width = content_width.max(1);
+    if line.is_empty() {
+        return 1;
+    }
+
+    let mut rows = 1usize;
+    let mut col = 0usize;
+    let mut token_is_whitespace: Option<bool> = None;
+    let mut token_width = 0usize;
+
+    for ch in line.chars() {
+        let is_whitespace = ch.is_whitespace();
+        if token_is_whitespace.is_some_and(|current| current != is_whitespace) {
+            append_wrapped_token(
+                token_width,
+                token_is_whitespace.unwrap(),
+                content_width,
+                &mut rows,
+                &mut col,
+            );
+            token_width = 0;
+        }
+        token_is_whitespace = Some(is_whitespace);
+        token_width = token_width.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0));
+    }
+
+    if let Some(is_whitespace) = token_is_whitespace {
+        append_wrapped_token(
+            token_width,
+            is_whitespace,
+            content_width,
+            &mut rows,
+            &mut col,
+        );
+    }
+
+    rows
+}
+
+fn append_wrapped_token(
+    token_width: usize,
+    is_whitespace: bool,
+    content_width: usize,
+    rows: &mut usize,
+    col: &mut usize,
+) {
+    if token_width == 0 {
+        return;
+    }
+
+    if !is_whitespace && *col > 0 && col.saturating_add(token_width) > content_width {
+        *rows = rows.saturating_add(1);
+        *col = 0;
+        append_hard_wrapped(token_width, content_width, rows, col);
+    } else {
+        append_hard_wrapped_from_current(token_width, content_width, rows, col);
+    }
+}
+
+fn append_hard_wrapped_from_current(
+    token_width: usize,
+    content_width: usize,
+    rows: &mut usize,
+    col: &mut usize,
+) {
+    if *col == 0 {
+        append_hard_wrapped(token_width, content_width, rows, col);
+        return;
+    }
+
+    let available = content_width.saturating_sub(*col);
+    if token_width <= available {
+        *col = col.saturating_add(token_width);
+    } else {
+        *rows = rows.saturating_add(1);
+        *col = 0;
+        append_hard_wrapped(
+            token_width.saturating_sub(available),
+            content_width,
+            rows,
+            col,
+        );
+    }
+}
+
+fn append_hard_wrapped(
+    token_width: usize,
+    content_width: usize,
+    rows: &mut usize,
+    col: &mut usize,
+) {
+    let full_rows = token_width / content_width;
+    let remainder = token_width % content_width;
+    if remainder == 0 {
+        *rows = rows.saturating_add(full_rows.saturating_sub(1));
+        *col = content_width;
+    } else {
+        *rows = rows.saturating_add(full_rows);
+        *col = remainder;
+    }
 }
 
 fn style_for(kind: &TranscriptKind) -> Style {
@@ -342,4 +453,33 @@ fn truncate_middle(s: &str, max: usize) -> String {
 fn input_height(input: &str) -> u16 {
     let lines = input.lines().count().max(1) as u16;
     (lines + 2).clamp(3, 8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn max_scroll_counts_wrapped_transcript_rows() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Assistant,
+            title: "response".into(),
+            content: "12345 12345 12345".into(),
+        }];
+        let area = Rect::new(0, 0, 12, 5);
+
+        assert!(max_transcript_scroll(&transcript, false, area) > 0);
+    }
+
+    #[test]
+    fn max_scroll_stays_zero_for_short_transcript() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Assistant,
+            title: "response".into(),
+            content: "Done.".into(),
+        }];
+        let area = Rect::new(0, 0, 80, 10);
+
+        assert_eq!(max_transcript_scroll(&transcript, false, area), 0);
+    }
 }

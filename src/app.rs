@@ -105,7 +105,11 @@ async fn run_tui(
     loop {
         let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
         autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
-        scroll = clamp_scroll(&terminal, &input, &transcript, show_full_tools, scroll)?;
+        scroll = if stick_to_bottom {
+            bottom_scroll(&terminal, &input, &transcript, show_full_tools)?
+        } else {
+            clamp_scroll(&terminal, &input, &transcript, show_full_tools, scroll)?
+        };
 
         terminal.draw(|f| {
             render::render(
