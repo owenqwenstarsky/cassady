@@ -4,6 +4,7 @@ pub mod ls;
 pub mod path;
 pub mod read;
 pub mod schema;
+pub mod shell;
 pub mod write;
 
 use crate::access::AccessMode;
@@ -11,6 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -26,6 +28,12 @@ pub struct ToolContext {
     pub read_roots: Vec<PathBuf>,
     pub blocked_write_roots: Vec<PathBuf>,
     pub model_result_limit: usize,
+    pub runtime_tx: Option<mpsc::UnboundedSender<ToolRuntimeEvent>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ToolRuntimeEvent {
+    OutputChunk { stream: String, content: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +51,7 @@ pub fn available_tool_names(mode: AccessMode) -> Vec<String> {
             "grep".into(),
             "write".into(),
             "edit".into(),
+            "shell".into(),
         ],
     }
 }
@@ -52,11 +61,26 @@ pub fn specs(mode: AccessMode) -> Vec<ToolSpec> {
     if mode.can_write() {
         specs.push(write::spec());
         specs.push(edit::spec());
+        specs.push(shell::spec());
     }
     specs
 }
 
 pub async fn execute(name: &str, args: Value, ctx: &ToolContext) -> ToolOutput {
+    // Async tools
+    if name == "shell" {
+        let result = if ctx.mode.can_write() {
+            shell::run(args, ctx).await
+        } else {
+            Err(anyhow::anyhow!(
+                "tool `{name}` is unavailable in {} mode",
+                ctx.mode
+            ))
+        };
+        return result_to_output(result, ctx);
+    }
+
+    // Sync tools
     let result: Result<String> = match name {
         "ls" => ls::run(args, ctx),
         "read" => read::run(args, ctx),
@@ -69,6 +93,10 @@ pub async fn execute(name: &str, args: Value, ctx: &ToolContext) -> ToolOutput {
         )),
         _ => Err(anyhow::anyhow!("unknown tool `{name}`")),
     };
+    result_to_output(result, ctx)
+}
+
+fn result_to_output(result: Result<String>, ctx: &ToolContext) -> ToolOutput {
     match result {
         Ok(content) => ToolOutput {
             ok: true,

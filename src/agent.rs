@@ -4,7 +4,7 @@ use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
 use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
 use crate::providers::types::ModelMessage;
-use crate::tools::{self, ToolContext};
+use crate::tools::{self, ToolContext, ToolRuntimeEvent};
 use anyhow::Result;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -18,6 +18,12 @@ pub enum AgentEvent {
         id: String,
         name: String,
         arguments: Value,
+    },
+    ToolOutputChunk {
+        id: String,
+        name: String,
+        stream: String,
+        content: String,
     },
     ToolResult {
         id: String,
@@ -86,6 +92,7 @@ pub async fn run_turn(
         read_roots: vec![settings.cwd.clone(), docs_dir.clone()],
         blocked_write_roots: vec![docs_dir.clone()],
         model_result_limit: settings.config.model_tool_result_limit,
+        runtime_tx: None,
     };
 
     let mut retrying_empty_final = false;
@@ -154,21 +161,42 @@ pub async fn run_turn(
             break;
         }
         for call in tool_calls {
+            let call_id = call.id.clone();
+            let call_name = call.name.clone();
+            let call_arguments = call.arguments.clone();
             let _ = tx.send(AgentEvent::ToolCallStarted {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
+                id: call_id.clone(),
+                name: call_name.clone(),
+                arguments: call_arguments.clone(),
             });
-            let output = tools::execute(&call.name, call.arguments.clone(), &tool_ctx).await;
+            let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel::<ToolRuntimeEvent>();
+            let mut call_tool_ctx = tool_ctx.clone();
+            call_tool_ctx.runtime_tx = Some(runtime_tx);
+            let output = {
+                let execute = tools::execute(&call_name, call_arguments, &call_tool_ctx);
+                tokio::pin!(execute);
+                let output = loop {
+                    tokio::select! {
+                        output = &mut execute => break output,
+                        Some(event) = runtime_rx.recv() => {
+                            forward_tool_runtime_event(&tx, &call_id, &call_name, event);
+                        }
+                    }
+                };
+                while let Ok(event) = runtime_rx.try_recv() {
+                    forward_tool_runtime_event(&tx, &call_id, &call_name, event);
+                }
+                output
+            };
             let _ = tx.send(AgentEvent::ToolResult {
-                id: call.id.clone(),
-                name: call.name.clone(),
+                id: call_id.clone(),
+                name: call_name.clone(),
                 ok: output.ok,
                 content: output.content.clone(),
             });
             conversation.append(Record::Tool {
-                tool_call_id: call.id,
-                name: call.name,
+                tool_call_id: call_id,
+                name: call_name,
                 ok: output.ok,
                 content: output.content,
                 ts: now_ts(),
@@ -177,6 +205,24 @@ pub async fn run_turn(
     }
     let _ = tx.send(AgentEvent::TurnFinished);
     Ok(conversation)
+}
+
+fn forward_tool_runtime_event(
+    tx: &mpsc::UnboundedSender<AgentEvent>,
+    id: &str,
+    name: &str,
+    event: ToolRuntimeEvent,
+) {
+    match event {
+        ToolRuntimeEvent::OutputChunk { stream, content } => {
+            let _ = tx.send(AgentEvent::ToolOutputChunk {
+                id: id.to_string(),
+                name: name.to_string(),
+                stream,
+                content,
+            });
+        }
+    }
 }
 
 fn append_visible_assistant(

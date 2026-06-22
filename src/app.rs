@@ -9,6 +9,7 @@ use crate::ui::render::{self, TranscriptBlock, TranscriptKind};
 use crate::ui::terminal;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -102,6 +103,7 @@ async fn run_tui(
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
     let mut active_assistant: Option<usize> = None;
     let mut active_reasoning: Option<usize> = None;
+    let mut active_tools: HashMap<String, usize> = HashMap::new();
     let mut stick_to_bottom = true;
     let mut chat_id = conversation.id.clone();
     let mut autofill_selected = 0usize;
@@ -115,6 +117,7 @@ async fn run_tui(
                 transcript: &mut transcript,
                 active_assistant: &mut active_assistant,
                 active_reasoning: &mut active_reasoning,
+                active_tools: &mut active_tools,
                 status: &mut status,
                 stick_to_bottom,
                 show_full_tools,
@@ -134,6 +137,7 @@ async fn run_tui(
                     transcript: &mut transcript,
                     active_assistant: &mut active_assistant,
                     active_reasoning: &mut active_reasoning,
+                    active_tools: &mut active_tools,
                     status: &mut status,
                     stick_to_bottom,
                     show_full_tools,
@@ -159,6 +163,7 @@ async fn run_tui(
             }
             active_assistant = None;
             active_reasoning = None;
+            active_tools.clear();
             status = "idle".into();
         }
 
@@ -435,6 +440,7 @@ async fn run_tui(
                                                     autofill_selected = 0;
                                                     active_assistant = None;
                                                     active_reasoning = None;
+                                                    active_tools.clear();
                                                     status = format!("new chat {chat_id}");
                                                     stick_to_bottom = true;
                                                     scroll = bottom_scroll(
@@ -484,6 +490,7 @@ async fn run_tui(
                                                     autofill_selected = 0;
                                                     active_assistant = None;
                                                     active_reasoning = None;
+                                                    active_tools.clear();
                                                     status = format!("resumed chat {chat_id}");
                                                     stick_to_bottom = true;
                                                     scroll = bottom_scroll(
@@ -531,6 +538,7 @@ async fn run_tui(
                                 });
                                 active_assistant = None;
                                 active_reasoning = None;
+                                active_tools.clear();
                                 status = "running".into();
                                 let settings = AgentSettings {
                                     config: config.clone(),
@@ -642,6 +650,7 @@ struct AgentEventContext<'a> {
     transcript: &'a mut Vec<TranscriptBlock>,
     active_assistant: &'a mut Option<usize>,
     active_reasoning: &'a mut Option<usize>,
+    active_tools: &'a mut HashMap<String, usize>,
     status: &'a mut String,
     stick_to_bottom: bool,
     show_full_tools: bool,
@@ -714,6 +723,19 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
                 content: serde_json::to_string_pretty(&arguments)
                     .unwrap_or_else(|_| arguments.to_string()),
             });
+            ctx.active_tools.insert(id, ctx.transcript.len() - 1);
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::ToolOutputChunk {
+            id,
+            name,
+            stream,
+            content,
+        } => {
+            *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
+            let idx = active_tool_block(ctx, &id, &name);
+            append_tool_output_chunk(&mut ctx.transcript[idx].content, &stream, &content);
             update_bottom_scroll(ctx)?;
         }
         AgentEvent::ToolResult {
@@ -722,6 +744,24 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             ok,
             content,
         } => {
+            if name == "shell" {
+                if let Some(idx) = ctx.active_tools.remove(&id) {
+                    ctx.transcript[idx].kind = if ok {
+                        TranscriptKind::Tool
+                    } else {
+                        TranscriptKind::Error
+                    };
+                    ctx.transcript[idx].title = format!(
+                        "{name} {} ({})",
+                        if ok { "✓" } else { "✗" },
+                        short_call_id(&id)
+                    );
+                    ctx.transcript[idx].content = content;
+                    update_bottom_scroll(ctx)?;
+                    return Ok(());
+                }
+            }
+            ctx.active_tools.remove(&id);
             ctx.transcript.push(TranscriptBlock {
                 kind: if ok {
                     TranscriptKind::Tool
@@ -748,10 +788,42 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
         AgentEvent::TurnFinished => {
             *ctx.active_assistant = None;
             *ctx.active_reasoning = None;
+            ctx.active_tools.clear();
             *ctx.status = "turn finished".into();
         }
     }
     Ok(())
+}
+
+fn active_tool_block(ctx: &mut AgentEventContext<'_>, id: &str, name: &str) -> usize {
+    if let Some(idx) = ctx.active_tools.get(id).copied() {
+        return idx;
+    }
+    ctx.transcript.push(TranscriptBlock {
+        kind: TranscriptKind::Tool,
+        title: format!("{name} … ({})", short_call_id(id)),
+        content: String::new(),
+    });
+    let idx = ctx.transcript.len() - 1;
+    ctx.active_tools.insert(id.to_string(), idx);
+    idx
+}
+
+fn append_tool_output_chunk(existing: &mut String, stream: &str, chunk: &str) {
+    if !existing.contains("streamed output:\n") {
+        if !existing.trim().is_empty() {
+            existing.push_str("\n\n");
+        }
+        existing.push_str("streamed output:\n");
+    }
+    if !existing.ends_with('\n') {
+        existing.push('\n');
+    }
+    existing.push_str(&format!("[{stream}] "));
+    existing.push_str(chunk);
+    if !chunk.ends_with('\n') {
+        existing.push('\n');
+    }
 }
 
 fn update_bottom_scroll(ctx: &mut AgentEventContext<'_>) -> Result<()> {

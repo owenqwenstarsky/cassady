@@ -10,6 +10,7 @@ fn ctx(root: &std::path::Path, mode: AccessMode) -> ToolContext {
         read_roots: vec![root.to_path_buf()],
         blocked_write_roots: Vec::new(),
         model_result_limit: 100_000,
+        runtime_tx: None,
     }
 }
 
@@ -20,6 +21,7 @@ fn ctx_with_docs(root: &std::path::Path, docs: &std::path::Path, mode: AccessMod
         read_roots: vec![root.to_path_buf(), docs.to_path_buf()],
         blocked_write_roots: vec![docs.to_path_buf()],
         model_result_limit: 100_000,
+        runtime_tx: None,
     }
 }
 
@@ -170,6 +172,33 @@ async fn full_access_blocks_write_and_edit_under_docs_root() {
         std::fs::read_to_string(docs.path().join("guide.md")).unwrap(),
         "original docs\n"
     );
+}
+
+#[tokio::test]
+async fn shell_streams_output_chunks() {
+    let dir = tempdir().unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut context = ctx(dir.path(), AccessMode::FullAccess);
+    context.runtime_tx = Some(tx);
+
+    let out = tools::execute(
+        "shell",
+        json!({"command":"printf hello; printf err >&2"}),
+        &context,
+    )
+    .await;
+
+    assert!(out.ok);
+    assert!(out.content.contains("stdout:\nhello"));
+    assert!(out.content.contains("stderr:\nerr"));
+
+    let mut streamed = String::new();
+    while let Ok(event) = rx.try_recv() {
+        let cassady::tools::ToolRuntimeEvent::OutputChunk { stream, content } = event;
+        streamed.push_str(&format!("{stream}:{content}"));
+    }
+    assert!(streamed.contains("stdout:hello"));
+    assert!(streamed.contains("stderr:err"));
 }
 
 #[cfg(unix)]

@@ -330,13 +330,18 @@ fn heading_for(block: &TranscriptBlock) -> String {
 }
 
 fn display_content(block: &TranscriptBlock, show_full_tools: bool, show_reasoning: bool) -> String {
-    if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools {
+    if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools && !is_live_tool_output(block)
+    {
         String::new()
     } else if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
         String::new()
     } else {
         block.content.clone()
     }
+}
+
+fn is_live_tool_output(block: &TranscriptBlock) -> bool {
+    block.title.contains('…') && block.content.contains("streamed output:\n")
 }
 
 fn footer_text(state: &RenderState<'_>) -> String {
@@ -445,8 +450,7 @@ fn input_height(input: &str, available_width: u16) -> u16 {
     // available_width - 2.  Count word-wrapped rows so that a single long
     // line grows the input area instead of overflowing horizontally.
     let prefix_width = 2usize;
-    let content_width = available_width
-        .saturating_sub(prefix_width as u16) as usize;
+    let content_width = available_width.saturating_sub(prefix_width as u16) as usize;
     let content_width = content_width.max(1);
 
     let mut rows = 0u16;
@@ -456,9 +460,7 @@ fn input_height(input: &str, available_width: u16) -> u16 {
         input.lines().collect()
     };
     for line in &lines {
-        rows = rows.saturating_add(
-            ratatui_wrapped_row_count(line, content_width) as u16,
-        );
+        rows = rows.saturating_add(ratatui_wrapped_row_count(line, content_width) as u16);
     }
     if input.ends_with('\n') {
         rows = rows.saturating_add(1);

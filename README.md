@@ -98,6 +98,6 @@ Reasoning is hidden by default unless `show_reasoning` is enabled; press `Ctrl-S
 
 Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd` and the bundled docs directory at `~/.cass/docs`.
 
-Full-access mode additionally allows `write` and `edit`. Mutating tools use atomic writes where practical: Cass writes to a temporary file first, then renames it into place after validation/write success. `write` and `edit` are always blocked under `~/.cass/docs`.
+Full-access mode additionally allows `write`, `edit`, and `shell`. Mutating tools use atomic writes where practical: Cass writes to a temporary file first, then renames it into place after validation/write success. `write` and `edit` are always blocked under `~/.cass/docs`. The `shell` tool runs commands via `sh -c` in the launch working directory with a configurable timeout (default 30 seconds) and streams stdout/stderr into the transcript while the command is running.
 
-There is no shell/bash tool in v1.
+The `shell` tool is available in full-access mode and runs shell commands in the launch working directory.
