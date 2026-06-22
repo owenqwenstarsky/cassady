@@ -105,7 +105,7 @@ fn main_layout(area: Rect, input: &str, menu_height: u16) -> std::rc::Rc<[Rect]>
         .constraints([
             Constraint::Min(3),
             Constraint::Length(menu_height),
-            Constraint::Length(input_height(input)),
+            Constraint::Length(input_height(input, area.width)),
             Constraint::Length(1),
         ])
         .split(area)
@@ -439,12 +439,31 @@ fn truncate_middle(s: &str, max: usize) -> String {
     format!("{start}…{end}")
 }
 
-fn input_height(input: &str) -> u16 {
-    let mut lines = input.lines().count().max(1) as u16;
-    if input.ends_with('\n') {
-        lines = lines.saturating_add(1);
+fn input_height(input: &str, available_width: u16) -> u16 {
+    // The first line has a 2-char prefix ("› " or "… ") and continuation
+    // lines have a 2-char indent ("  "), so the content width is always
+    // available_width - 2.  Count word-wrapped rows so that a single long
+    // line grows the input area instead of overflowing horizontally.
+    let prefix_width = 2usize;
+    let content_width = available_width
+        .saturating_sub(prefix_width as u16) as usize;
+    let content_width = content_width.max(1);
+
+    let mut rows = 0u16;
+    let lines: Vec<&str> = if input.is_empty() {
+        vec![""]
+    } else {
+        input.lines().collect()
+    };
+    for line in &lines {
+        rows = rows.saturating_add(
+            ratatui_wrapped_row_count(line, content_width) as u16,
+        );
     }
-    lines.clamp(1, 6)
+    if input.ends_with('\n') {
+        rows = rows.saturating_add(1);
+    }
+    rows.max(1).clamp(1, 6)
 }
 
 #[cfg(test)]
@@ -473,6 +492,30 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
 
         assert_eq!(max_transcript_scroll(&transcript, false, false, area), 0);
+    }
+
+    #[test]
+    fn input_height_wraps_long_line() {
+        // A single long line with no newlines should occupy more than 1 row
+        // when the terminal is narrow.
+        let long = "word ".repeat(40);
+        assert!(input_height(&long, 20) > 1);
+    }
+
+    #[test]
+    fn input_height_short_line_is_one_row() {
+        assert_eq!(input_height("hello", 80), 1);
+    }
+
+    #[test]
+    fn input_height_counts_explicit_newlines() {
+        assert_eq!(input_height("line1\nline2\nline3", 80), 3);
+    }
+
+    #[test]
+    fn input_height_clamps_at_six() {
+        let long = "word ".repeat(400);
+        assert_eq!(input_height(&long, 20), 6);
     }
 
     #[test]
