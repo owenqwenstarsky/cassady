@@ -10,6 +10,10 @@ pub fn assistant() -> Style {
     Style::default().fg(Color::White)
 }
 
+pub fn reasoning() -> Style {
+    Style::default().fg(Color::DarkGray)
+}
+
 pub fn tool() -> Style {
     Style::default().fg(Color::DarkGray)
 }

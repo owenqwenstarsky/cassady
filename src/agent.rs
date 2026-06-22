@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     AssistantChunk(String),
+    ReasoningChunk(String),
     ToolCallStarted {
         id: String,
         name: String,
@@ -131,6 +132,8 @@ pub async fn run_turn(
 
         conversation.append(Record::Assistant {
             content: completion.content,
+            reasoning: completion.reasoning,
+            reasoning_field: completion.reasoning_field,
             tool_calls: tool_calls.clone(),
             ts: now_ts(),
         })?;
@@ -172,6 +175,8 @@ fn append_visible_assistant(
     let _ = tx.send(AgentEvent::AssistantChunk(content.clone()));
     conversation.append(Record::Assistant {
         content,
+        reasoning: String::new(),
+        reasoning_field: None,
         tool_calls: Vec::new(),
         ts: now_ts(),
     })
@@ -186,10 +191,14 @@ fn build_messages(records: &[Record], system: String, limit: usize) -> Vec<Model
             }),
             Record::Assistant {
                 content,
+                reasoning,
+                reasoning_field,
                 tool_calls,
                 ..
             } => non_system.push(ModelMessage::Assistant {
                 content: content.clone(),
+                reasoning: reasoning.clone(),
+                reasoning_field: reasoning_field.clone(),
                 tool_calls: tool_calls.clone(),
             }),
             Record::Tool {

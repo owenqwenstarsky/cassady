@@ -39,6 +39,8 @@ pub struct ConfigFile {
     pub model_tool_result_limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_tool_result_limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_reasoning: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,6 +109,7 @@ pub struct Config {
     pub context_message_limit: usize,
     pub model_tool_result_limit: usize,
     pub ui_tool_result_limit: usize,
+    pub show_reasoning: bool,
     pub root: PathBuf,
     pub docs_dir: PathBuf,
 }
@@ -131,6 +134,7 @@ impl Default for Config {
             context_message_limit: 80,
             model_tool_result_limit: 24_000,
             ui_tool_result_limit: 4_000,
+            show_reasoning: false,
             root,
             docs_dir,
         }
@@ -191,6 +195,9 @@ impl Config {
             }
             if let Some(v) = file.ui_tool_result_limit {
                 cfg.ui_tool_result_limit = v;
+            }
+            if let Some(v) = file.show_reasoning {
+                cfg.show_reasoning = v;
             }
         }
 

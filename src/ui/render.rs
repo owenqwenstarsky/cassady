@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthChar;
 pub enum TranscriptKind {
     User,
     Assistant,
+    Reasoning,
     Tool,
     Status,
     Error,
@@ -35,6 +36,7 @@ pub struct RenderState<'a> {
     pub status: &'a str,
     pub busy: bool,
     pub show_full_tools: bool,
+    pub show_reasoning: bool,
     pub scroll: u16,
     pub autofill: Option<&'a AutoFillMenu>,
 }
@@ -43,10 +45,15 @@ pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
     let menu_height = autofill_height(state.autofill);
     let chunks = main_layout(f.area(), state.input, menu_height);
 
-    let lines = transcript_lines_from(state.transcript, state.show_full_tools);
+    let lines = transcript_lines_from(
+        state.transcript,
+        state.show_full_tools,
+        state.show_reasoning,
+    );
     let effective_scroll = state.scroll.min(max_transcript_scroll(
         state.transcript,
         state.show_full_tools,
+        state.show_reasoning,
         chunks[0],
     ));
     let transcript = Paragraph::new(Text::from(lines))
@@ -73,13 +80,14 @@ pub fn transcript_area(area: Rect, input: &str) -> Rect {
 pub fn max_transcript_scroll(
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
     area: Rect,
 ) -> u16 {
     // Paragraph::scroll is measured in rendered rows, not logical lines. Long
     // tool output and assistant messages wrap, so count rows with the same
     // word-wrapping behavior ratatui uses for Paragraph::wrap(trim: false).
     let content_width = area.width.max(1) as usize;
-    let row_count = transcript_lines_from(transcript, show_full_tools)
+    let row_count = transcript_lines_from(transcript, show_full_tools, show_reasoning)
         .iter()
         .map(|line| ratatui_wrapped_row_count(&line.to_string(), content_width))
         .sum::<usize>();
@@ -143,17 +151,21 @@ fn render_autofill_menu(f: &mut Frame<'_>, area: Rect, menu: &AutoFillMenu) {
 fn transcript_lines_from(
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for block in transcript {
         if matches!(block.kind, TranscriptKind::Assistant) && block.content.trim().is_empty() {
             continue;
         }
+        if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
+            continue;
+        }
 
         let style = style_for(&block.kind);
         lines.push(Line::styled(heading_for(block), style));
 
-        let content = display_content(block, show_full_tools);
+        let content = display_content(block, show_full_tools, show_reasoning);
         if !content.trim().is_empty() {
             for line in content.lines() {
                 lines.push(Line::raw(format!("  {}", sanitize_line(line))));
@@ -291,6 +303,7 @@ fn style_for(kind: &TranscriptKind) -> Style {
     match kind {
         TranscriptKind::User => theme::user(),
         TranscriptKind::Assistant => theme::assistant(),
+        TranscriptKind::Reasoning => theme::reasoning(),
         TranscriptKind::Tool => theme::tool(),
         TranscriptKind::Status => Style::default().fg(Color::DarkGray),
         TranscriptKind::Error => theme::error(),
@@ -301,6 +314,7 @@ fn heading_for(block: &TranscriptBlock) -> String {
     match block.kind {
         TranscriptKind::User => "› you".into(),
         TranscriptKind::Assistant => "cass".into(),
+        TranscriptKind::Reasoning => "· reasoning".into(),
         TranscriptKind::Tool => format!("· {}", block.title),
         TranscriptKind::Status => {
             if block.title.trim().is_empty() || block.title == "status" {
@@ -313,8 +327,10 @@ fn heading_for(block: &TranscriptBlock) -> String {
     }
 }
 
-fn display_content(block: &TranscriptBlock, show_full_tools: bool) -> String {
+fn display_content(block: &TranscriptBlock, show_full_tools: bool, show_reasoning: bool) -> String {
     if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools {
+        String::new()
+    } else if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
         String::new()
     } else {
         block.content.clone()
@@ -337,6 +353,9 @@ fn footer_text(state: &RenderState<'_>) -> String {
     ];
     if state.show_full_tools {
         parts.push("tools:full".into());
+    }
+    if state.show_reasoning {
+        parts.push("reasoning:on".into());
     }
     if !state.status.trim().is_empty() {
         parts.push(state.status.trim().to_string());
@@ -438,7 +457,7 @@ mod tests {
         }];
         let area = Rect::new(0, 0, 12, 3);
 
-        assert!(max_transcript_scroll(&transcript, false, area) > 0);
+        assert!(max_transcript_scroll(&transcript, false, false, area) > 0);
     }
 
     #[test]
@@ -450,7 +469,7 @@ mod tests {
         }];
         let area = Rect::new(0, 0, 80, 10);
 
-        assert_eq!(max_transcript_scroll(&transcript, false, area), 0);
+        assert_eq!(max_transcript_scroll(&transcript, false, false, area), 0);
     }
 
     #[test]
@@ -472,7 +491,7 @@ mod tests {
             },
         ];
         let area = Rect::new(0, 0, 80, 5);
-        let max = max_transcript_scroll(&transcript, true, area);
+        let max = max_transcript_scroll(&transcript, true, false, area);
 
         assert!(max > 50, "max scroll was {max}");
     }

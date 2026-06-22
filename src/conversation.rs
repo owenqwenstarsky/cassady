@@ -24,6 +24,10 @@ pub enum Record {
     },
     Assistant {
         content: String,
+        #[serde(default)]
+        reasoning: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_field: Option<String>,
         tool_calls: Vec<StoredToolCall>,
         ts: String,
     },

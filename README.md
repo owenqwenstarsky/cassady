@@ -34,7 +34,8 @@ User preferences live at `~/.cass/config.json`:
 ```json
 {
   "default_model": "accounts/fireworks/models/qwen3p7-plus",
-  "default_access_mode": "read-only"
+  "default_access_mode": "read-only",
+  "show_reasoning": false
 }
 ```
 
@@ -70,6 +71,7 @@ cass check
 - `Ctrl-J`: insert newline
 - `Shift-Tab`: toggle read-only/full-access mode while idle
 - `Ctrl-O`: toggle compact/full tool output display
+- `Ctrl-Shift-R`: toggle reasoning display
 - `Up`/`Down` or mouse wheel: scroll transcript when no autocomplete menu is open
 - `PageUp`/`PageDown`: transcript scroll
 - `Ctrl-C` twice within 1.5 seconds: exit
@@ -91,6 +93,8 @@ Resume this chat with: cass --resume <id>
 ## Tools
 
 Tool calls are shown compactly by default; press `Ctrl-O` to expand full tool output.
+
+Reasoning is hidden by default unless `show_reasoning` is enabled; press `Ctrl-Shift-R` to toggle it. When providers stream reasoning fields, Cass persists that reasoning and sends it back in future model context using the provider's reasoning field, such as `reasoning_content` or `reasoning`.
 
 Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd` and the bundled docs directory at `~/.cass/docs`.
 

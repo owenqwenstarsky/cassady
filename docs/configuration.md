@@ -20,7 +20,8 @@ Example:
   "default_access_mode": "read-only",
   "context_message_limit": 80,
   "model_tool_result_limit": 24000,
-  "ui_tool_result_limit": 4000
+  "ui_tool_result_limit": 4000,
+  "show_reasoning": false
 }
 ```
 
@@ -32,6 +33,7 @@ Fields:
 - `context_message_limit`: optional number of recent non-system messages sent to the model.
 - `model_tool_result_limit`: optional max bytes of tool output sent back to the model.
 - `ui_tool_result_limit`: optional max bytes of tool output shown in the UI unless full output is toggled.
+- `show_reasoning`: optional boolean, defaults to `false`. Shows provider-streamed reasoning in the transcript. Reasoning is persisted and sent back in future model context using the provider's reasoning field, such as `reasoning_content` or `reasoning`.
 
 Deprecated compatibility fields from older Cass versions are still accepted: `provider`, `model`, `base_url`, and `api_key_env`. Prefer moving provider connection details to `providers.json`.
 

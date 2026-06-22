@@ -95,10 +95,12 @@ async fn run_tui(
     let mut mode = config.default_access_mode;
     let mut status = String::new();
     let mut show_full_tools = false;
+    let mut show_reasoning = config.show_reasoning;
     let mut scroll: u16 = 0;
     let mut last_ctrl_c: Option<Instant> = None;
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
     let mut active_assistant: Option<usize> = None;
+    let mut active_reasoning: Option<usize> = None;
     let mut stick_to_bottom = true;
     let mut chat_id = conversation.id.clone();
     let mut autofill_selected = 0usize;
@@ -111,9 +113,11 @@ async fn run_tui(
                 input: &input,
                 transcript: &mut transcript,
                 active_assistant: &mut active_assistant,
+                active_reasoning: &mut active_reasoning,
                 status: &mut status,
                 stick_to_bottom,
                 show_full_tools,
+                show_reasoning,
                 scroll: &mut scroll,
             },
         )?;
@@ -128,9 +132,11 @@ async fn run_tui(
                     input: &input,
                     transcript: &mut transcript,
                     active_assistant: &mut active_assistant,
+                    active_reasoning: &mut active_reasoning,
                     status: &mut status,
                     stick_to_bottom,
                     show_full_tools,
+                    show_reasoning,
                     scroll: &mut scroll,
                 },
             )?;
@@ -151,15 +157,29 @@ async fn run_tui(
                 }),
             }
             active_assistant = None;
+            active_reasoning = None;
             status = "idle".into();
         }
 
         let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
         autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
         scroll = if stick_to_bottom {
-            bottom_scroll(&terminal, &input, &transcript, show_full_tools)?
+            bottom_scroll(
+                &terminal,
+                &input,
+                &transcript,
+                show_full_tools,
+                show_reasoning,
+            )?
         } else {
-            clamp_scroll(&terminal, &input, &transcript, show_full_tools, scroll)?
+            clamp_scroll(
+                &terminal,
+                &input,
+                &transcript,
+                show_full_tools,
+                show_reasoning,
+                scroll,
+            )?
         };
 
         terminal.draw(|f| {
@@ -176,6 +196,7 @@ async fn run_tui(
                     status: &status,
                     busy: handle.is_some(),
                     show_full_tools,
+                    show_reasoning,
                     scroll,
                     autofill: autofill.as_ref(),
                 },
@@ -221,13 +242,20 @@ async fn run_tui(
                         (KeyCode::Char('o'), m) if m.contains(KeyModifiers::CONTROL) => {
                             show_full_tools = !show_full_tools;
                             scroll = if stick_to_bottom {
-                                bottom_scroll(&terminal, &input, &transcript, show_full_tools)?
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
                             } else {
                                 clamp_scroll(
                                     &terminal,
                                     &input,
                                     &transcript,
                                     show_full_tools,
+                                    show_reasoning,
                                     scroll,
                                 )?
                             };
@@ -235,6 +263,63 @@ async fn run_tui(
                                 "showing full tool output"
                             } else {
                                 "showing compact tool output"
+                            }
+                            .into();
+                        }
+                        (KeyCode::Char('R'), m) if m.contains(KeyModifiers::CONTROL) => {
+                            show_reasoning = !show_reasoning;
+                            scroll = if stick_to_bottom {
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
+                            } else {
+                                clamp_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                    scroll,
+                                )?
+                            };
+                            status = if show_reasoning {
+                                "showing reasoning"
+                            } else {
+                                "hiding reasoning"
+                            }
+                            .into();
+                        }
+                        (KeyCode::Char('r'), m)
+                            if m.contains(KeyModifiers::CONTROL)
+                                && m.contains(KeyModifiers::SHIFT) =>
+                        {
+                            show_reasoning = !show_reasoning;
+                            scroll = if stick_to_bottom {
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
+                            } else {
+                                clamp_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                    scroll,
+                                )?
+                            };
+                            status = if show_reasoning {
+                                "showing reasoning"
+                            } else {
+                                "hiding reasoning"
                             }
                             .into();
                         }
@@ -280,6 +365,7 @@ async fn run_tui(
                                                 &input,
                                                 &transcript,
                                                 show_full_tools,
+                                                show_reasoning,
                                             )?;
                                         }
                                     }
@@ -302,6 +388,7 @@ async fn run_tui(
                                                     &input,
                                                     &transcript,
                                                     show_full_tools,
+                                                    show_reasoning,
                                                 )?;
                                             }
                                         }
@@ -318,6 +405,7 @@ async fn run_tui(
                                                     input.clear();
                                                     autofill_selected = 0;
                                                     active_assistant = None;
+                                                    active_reasoning = None;
                                                     status = format!("new chat {chat_id}");
                                                     stick_to_bottom = true;
                                                     scroll = bottom_scroll(
@@ -325,6 +413,7 @@ async fn run_tui(
                                                         &input,
                                                         &transcript,
                                                         show_full_tools,
+                                                        show_reasoning,
                                                     )?;
                                                 }
                                                 Err(err) => {
@@ -340,6 +429,7 @@ async fn run_tui(
                                                             &input,
                                                             &transcript,
                                                             show_full_tools,
+                                                            show_reasoning,
                                                         )?;
                                                     }
                                                 }
@@ -364,6 +454,7 @@ async fn run_tui(
                                                     input.clear();
                                                     autofill_selected = 0;
                                                     active_assistant = None;
+                                                    active_reasoning = None;
                                                     status = format!("resumed chat {chat_id}");
                                                     stick_to_bottom = true;
                                                     scroll = bottom_scroll(
@@ -371,6 +462,7 @@ async fn run_tui(
                                                         &input,
                                                         &transcript,
                                                         show_full_tools,
+                                                        show_reasoning,
                                                     )?;
                                                 }
                                                 Err(err) => {
@@ -386,6 +478,7 @@ async fn run_tui(
                                                             &input,
                                                             &transcript,
                                                             show_full_tools,
+                                                            show_reasoning,
                                                         )?;
                                                     }
                                                 }
@@ -408,6 +501,7 @@ async fn run_tui(
                                     content: msg.clone(),
                                 });
                                 active_assistant = None;
+                                active_reasoning = None;
                                 status = "running".into();
                                 let settings = AgentSettings {
                                     config: config.clone(),
@@ -420,8 +514,13 @@ async fn run_tui(
                                     agent::run_turn(convo, msg, settings, tx2).await
                                 }));
                                 stick_to_bottom = true;
-                                scroll =
-                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                                scroll = bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?;
                             }
                         }
                         (KeyCode::Backspace, _) => {
@@ -440,8 +539,13 @@ async fn run_tui(
                             if let Some(menu) = &autofill {
                                 autofill_selected = menu.next_index();
                             } else {
-                                let max =
-                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                                let max = bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?;
                                 scroll = scroll.saturating_add(1).min(max);
                                 stick_to_bottom = scroll >= max;
                             }
@@ -451,8 +555,13 @@ async fn run_tui(
                             stick_to_bottom = false;
                         }
                         (KeyCode::PageDown, _) => {
-                            let max =
-                                bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                            let max = bottom_scroll(
+                                &terminal,
+                                &input,
+                                &transcript,
+                                show_full_tools,
+                                show_reasoning,
+                            )?;
                             scroll = scroll.saturating_add(10).min(max);
                             stick_to_bottom = scroll >= max;
                         }
@@ -472,7 +581,13 @@ async fn run_tui(
                         stick_to_bottom = false;
                     }
                     MouseEventKind::ScrollDown => {
-                        let max = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                        let max = bottom_scroll(
+                            &terminal,
+                            &input,
+                            &transcript,
+                            show_full_tools,
+                            show_reasoning,
+                        )?;
                         scroll = scroll.saturating_add(3).min(max);
                         stick_to_bottom = scroll >= max;
                     }
@@ -496,9 +611,11 @@ struct AgentEventContext<'a> {
     input: &'a str,
     transcript: &'a mut Vec<TranscriptBlock>,
     active_assistant: &'a mut Option<usize>,
+    active_reasoning: &'a mut Option<usize>,
     status: &'a mut String,
     stick_to_bottom: bool,
     show_full_tools: bool,
+    show_reasoning: bool,
     scroll: &'a mut u16,
 }
 
@@ -534,12 +651,33 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             ctx.transcript[idx].content.push_str(&s);
             update_bottom_scroll(ctx)?;
         }
+        AgentEvent::ReasoningChunk(s) => {
+            if ctx.active_reasoning.is_none() && s.trim().is_empty() {
+                return Ok(());
+            }
+            let idx = match *ctx.active_reasoning {
+                Some(i) => i,
+                None => {
+                    ctx.transcript.push(TranscriptBlock {
+                        kind: TranscriptKind::Reasoning,
+                        title: "reasoning".into(),
+                        content: String::new(),
+                    });
+                    let i = ctx.transcript.len() - 1;
+                    *ctx.active_reasoning = Some(i);
+                    i
+                }
+            };
+            ctx.transcript[idx].content.push_str(&s);
+            update_bottom_scroll(ctx)?;
+        }
         AgentEvent::ToolCallStarted {
             id,
             name,
             arguments,
         } => {
             *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
             ctx.transcript.push(TranscriptBlock {
                 kind: TranscriptKind::Tool,
                 title: format!("{name} … ({})", short_call_id(&id)),
@@ -579,6 +717,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
         }
         AgentEvent::TurnFinished => {
             *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
             *ctx.status = "turn finished".into();
         }
     }
@@ -587,7 +726,13 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
 
 fn update_bottom_scroll(ctx: &mut AgentEventContext<'_>) -> Result<()> {
     if ctx.stick_to_bottom {
-        *ctx.scroll = bottom_scroll(ctx.terminal, ctx.input, ctx.transcript, ctx.show_full_tools)?;
+        *ctx.scroll = bottom_scroll(
+            ctx.terminal,
+            ctx.input,
+            ctx.transcript,
+            ctx.show_full_tools,
+            ctx.show_reasoning,
+        )?;
     }
     Ok(())
 }
@@ -963,11 +1108,13 @@ fn bottom_scroll(
     input: &str,
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
 ) -> Result<u16> {
     let area = render::transcript_area(terminal_area(terminal)?, input);
     Ok(render::max_transcript_scroll(
         transcript,
         show_full_tools,
+        show_reasoning,
         area,
     ))
 }
@@ -977,9 +1124,16 @@ fn clamp_scroll(
     input: &str,
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
     scroll: u16,
 ) -> Result<u16> {
-    Ok(scroll.min(bottom_scroll(terminal, input, transcript, show_full_tools)?))
+    Ok(scroll.min(bottom_scroll(
+        terminal,
+        input,
+        transcript,
+        show_full_tools,
+        show_reasoning,
+    )?))
 }
 
 fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock> {
@@ -993,9 +1147,17 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
             }),
             conversation::Record::Assistant {
                 content,
+                reasoning,
                 tool_calls,
                 ..
             } => {
+                if !reasoning.trim().is_empty() {
+                    blocks.push(TranscriptBlock {
+                        kind: TranscriptKind::Reasoning,
+                        title: "reasoning".into(),
+                        content: reasoning.clone(),
+                    });
+                }
                 if !content.trim().is_empty() {
                     blocks.push(TranscriptBlock {
                         kind: TranscriptKind::Assistant,
@@ -1133,6 +1295,8 @@ mod tests {
             path: PathBuf::new(),
             records: vec![conversation::Record::Assistant {
                 content: "Done.".into(),
+                reasoning: String::new(),
+                reasoning_field: None,
                 tool_calls: Vec::new(),
                 ts: "now".into(),
             }],
@@ -1164,6 +1328,8 @@ mod tests {
             path: PathBuf::new(),
             records: vec![conversation::Record::Assistant {
                 content: "\nDone.".into(),
+                reasoning: String::new(),
+                reasoning_field: None,
                 tool_calls: Vec::new(),
                 ts: "now".into(),
             }],
