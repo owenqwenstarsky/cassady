@@ -96,7 +96,7 @@ async fn run_tui(
     let mut status = String::new();
     let mut show_full_tools = false;
     let mut show_reasoning = config.show_reasoning;
-    let mut reasoning_effort = ReasoningEffort::default_for_model(config.model_metadata.as_ref());
+    let mut reasoning_effort = config.reasoning_effort;
     let mut scroll: u16 = 0;
     let mut last_ctrl_c: Option<Instant> = None;
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
@@ -249,6 +249,11 @@ async fn run_tui(
                                     status = "reasoning unsupported for this model".into();
                                 } else {
                                     reasoning_effort = next;
+                                    let _ = crate::config::save_last_used(
+                                        &config.root,
+                                        &config.model,
+                                        reasoning_effort,
+                                    );
                                     status.clear();
                                 }
                             }
@@ -392,6 +397,11 @@ async fn run_tui(
                                                 model_metadata_for(&config, &model)?;
                                             reasoning_effort = ReasoningEffort::default_for_model(
                                                 config.model_metadata.as_ref(),
+                                            );
+                                            let _ = crate::config::save_last_used(
+                                                &config.root,
+                                                &config.model,
+                                                reasoning_effort,
                                             );
                                             input.clear();
                                             autofill_selected = 0;

@@ -20,6 +20,8 @@ pub struct ConfigFile {
     pub default_provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<ReasoningEffort>,
 
     // Deprecated compatibility fields accepted from older config.json files.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +136,7 @@ pub struct ResolvedProviderConfig {
 pub struct Config {
     pub provider_id: String,
     pub model: String,
+    pub reasoning_effort: ReasoningEffort,
     pub active_provider: ResolvedProviderConfig,
     pub model_metadata: Option<ModelDefinition>,
     pub default_access_mode: AccessMode,
@@ -246,6 +249,7 @@ impl Default for Config {
         Self {
             provider_id: DEFAULT_PROVIDER_ID.to_string(),
             model: DEFAULT_MODEL.to_string(),
+            reasoning_effort: ReasoningEffort::Medium,
             active_provider,
             model_metadata: Some(default_model_definition()),
             default_access_mode: AccessMode::ReadOnly,
@@ -351,8 +355,16 @@ impl Config {
             .unwrap_or_else(|| DEFAULT_MODEL.to_string());
         let metadata = find_model_for_provider(&models, &provider.id, &model).cloned();
 
+        // Use the persisted reasoning effort if present, otherwise the model default.
+        let reasoning_effort = file
+            .as_ref()
+            .and_then(|f| f.default_reasoning_effort)
+            .map(|e| e.clamp_for_model(metadata.as_ref()))
+            .unwrap_or_else(|| ReasoningEffort::default_for_model(metadata.as_ref()));
+
         cfg.provider_id = provider.id.clone();
         cfg.model = model;
+        cfg.reasoning_effort = reasoning_effort;
         cfg.active_provider = provider;
         cfg.model_metadata = metadata;
         Ok(cfg)
@@ -404,6 +416,15 @@ pub fn load_config_file(root: &Path) -> Result<Option<ConfigFile>> {
     Ok(Some(file))
 }
 
+/// Persist the last-used model and reasoning effort into `config.json` so the
+/// next session starts with the same values.
+pub fn save_last_used(root: &Path, model: &str, reasoning_effort: ReasoningEffort) -> Result<()> {
+    let path = config_path(root);
+    let mut file = load_config_file(root)?.unwrap_or_default();
+    file.default_model = Some(model.to_string());
+    file.default_reasoning_effort = Some(reasoning_effort);
+    write_json_pretty(&path, &file)
+}
 pub fn load_or_create_default_provider_registry(root: &Path) -> Result<ProvidersFile> {
     fs::create_dir_all(root).with_context(|| format!("creating {}", root.display()))?;
     let path = providers_path(root);
