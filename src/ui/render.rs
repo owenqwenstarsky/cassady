@@ -1,4 +1,5 @@
 use crate::access::AccessMode;
+use crate::config::ReasoningEffort;
 use crate::ui::autofill::AutoFillMenu;
 use crate::ui::theme;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -37,6 +38,7 @@ pub struct RenderState<'a> {
     pub busy: bool,
     pub show_full_tools: bool,
     pub show_reasoning: bool,
+    pub reasoning_effort: ReasoningEffort,
     pub scroll: u16,
     pub autofill: Option<&'a AutoFillMenu>,
 }
@@ -354,8 +356,9 @@ fn footer_text(state: &RenderState<'_>) -> String {
     if state.show_full_tools {
         parts.push("tools:full".into());
     }
+    parts.push(format!("reasoning:{}", state.reasoning_effort));
     if state.show_reasoning {
-        parts.push("reasoning:on".into());
+        parts.push("reasoning:visible".into());
     }
     if !state.status.trim().is_empty() {
         parts.push(state.status.trim().to_string());

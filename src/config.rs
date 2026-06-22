@@ -85,6 +85,37 @@ pub struct ModelDefinition {
     pub supports_tools: bool,
     #[serde(default = "default_true")]
     pub supports_streaming: bool,
+    #[serde(default)]
+    pub reasoning: ReasoningMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReasoningMetadata {
+    #[serde(default = "default_true")]
+    pub supported: bool,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default = "default_reasoning_effort")]
+    pub default_effort: ReasoningEffort,
+    #[serde(default)]
+    pub request_format: ReasoningRequestFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Off,
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningRequestFormat {
+    ReasoningEffort,
+    ReasoningObject,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +149,93 @@ pub struct Config {
 pub enum ApiKeyReference {
     Env(String),
     Literal,
+}
+
+impl Default for ReasoningMetadata {
+    fn default() -> Self {
+        Self {
+            supported: true,
+            required: false,
+            default_effort: ReasoningEffort::Medium,
+            request_format: ReasoningRequestFormat::ReasoningEffort,
+        }
+    }
+}
+
+impl Default for ReasoningRequestFormat {
+    fn default() -> Self {
+        Self::ReasoningEffort
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ReasoningEffort::Off => "off",
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+        })
+    }
+}
+
+impl ReasoningEffort {
+    pub fn default_for_model(model: Option<&ModelDefinition>) -> Self {
+        let Some(model) = model else {
+            return Self::Off;
+        };
+        if !model.reasoning.supported {
+            return Self::Off;
+        }
+        if model.reasoning.required && model.reasoning.default_effort == Self::Off {
+            Self::Medium
+        } else {
+            model.reasoning.default_effort
+        }
+    }
+
+    pub fn next_for_model(self, model: Option<&ModelDefinition>) -> Self {
+        let Some(model) = model else {
+            return Self::Off;
+        };
+        if !model.reasoning.supported {
+            return Self::Off;
+        }
+        let required = model.reasoning.required;
+        match (self, required) {
+            (Self::Off, _) => Self::Low,
+            (Self::Low, _) => Self::Medium,
+            (Self::Medium, _) => Self::High,
+            (Self::High, true) => Self::Low,
+            (Self::High, false) => Self::Off,
+        }
+    }
+
+    pub fn clamp_for_model(self, model: Option<&ModelDefinition>) -> Self {
+        let Some(model) = model else {
+            return Self::Off;
+        };
+        if !model.reasoning.supported {
+            return Self::Off;
+        }
+        if model.reasoning.required && self == Self::Off {
+            return Self::default_for_model(Some(model));
+        }
+        self
+    }
+
+    pub fn request_value(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+        }
+    }
+}
+
+fn default_reasoning_effort() -> ReasoningEffort {
+    ReasoningEffort::Medium
 }
 
 impl Default for Config {
@@ -335,6 +453,7 @@ pub fn default_model_definition() -> ModelDefinition {
         max_output_tokens: Some(32_768),
         supports_tools: true,
         supports_streaming: true,
+        reasoning: ReasoningMetadata::default(),
     }
 }
 
@@ -469,6 +588,18 @@ pub fn validate_registries(
         if matches!(model.max_output_tokens, Some(0)) {
             out.errors.push(format!(
                 "models.json: model `{}` max_output_tokens must be positive",
+                model.id
+            ));
+        }
+        if model.reasoning.required && !model.reasoning.supported {
+            out.errors.push(format!(
+                "models.json: model `{}` cannot require reasoning when reasoning is unsupported",
+                model.id
+            ));
+        }
+        if model.reasoning.required && model.reasoning.default_effort == ReasoningEffort::Off {
+            out.errors.push(format!(
+                "models.json: model `{}` reasoning default_effort cannot be `off` when reasoning is required",
                 model.id
             ));
         }

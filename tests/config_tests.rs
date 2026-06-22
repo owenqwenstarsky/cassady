@@ -1,6 +1,9 @@
 use cassady::check;
 use cassady::cli::Cli;
-use cassady::config::{self, Config, ModelsFile, ProviderDefinition, ProvidersFile};
+use cassady::config::{
+    self, Config, ModelsFile, ProviderDefinition, ProvidersFile, ReasoningEffort,
+    ReasoningRequestFormat,
+};
 use tempfile::tempdir;
 
 fn cli() -> Cli {
@@ -42,6 +45,15 @@ fn default_provider_and_model_files_are_created() {
         serde_json::from_str(&std::fs::read_to_string(root.path().join("models.json")).unwrap())
             .unwrap();
     assert_eq!(models.models[0].provider, "fireworks");
+    assert!(models.models[0].reasoning.supported);
+    assert_eq!(
+        models.models[0].reasoning.default_effort,
+        ReasoningEffort::Medium
+    );
+    assert_eq!(
+        models.models[0].reasoning.request_format,
+        ReasoningRequestFormat::ReasoningEffort
+    );
 }
 
 #[test]
@@ -92,6 +104,26 @@ fn api_key_resolution_supports_env_refs_and_literals() {
     if let Some(old) = old {
         std::env::set_var(key, old);
     }
+}
+
+#[test]
+fn reasoning_defaults_to_supported_medium_for_model_metadata() {
+    let model: config::ModelDefinition = serde_json::from_str(
+        r#"{
+  "id": "test-model",
+  "provider": "test-provider"
+}
+"#,
+    )
+    .unwrap();
+
+    assert!(model.reasoning.supported);
+    assert!(!model.reasoning.required);
+    assert_eq!(model.reasoning.default_effort, ReasoningEffort::Medium);
+    assert_eq!(
+        model.reasoning.request_format,
+        ReasoningRequestFormat::ReasoningEffort
+    );
 }
 
 #[test]

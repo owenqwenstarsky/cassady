@@ -1,5 +1,6 @@
 use super::types::{CompletionResult, ModelMessage};
 use crate::agent::AgentEvent;
+use crate::config::{ReasoningEffort, ReasoningRequestFormat};
 use crate::conversation::StoredToolCall;
 use crate::tools::ToolSpec;
 use anyhow::{bail, Result};
@@ -15,6 +16,8 @@ pub struct OpenAiCompatibleProvider {
     model: String,
     base_url: String,
     api_key: String,
+    reasoning_effort: ReasoningEffort,
+    reasoning_request_format: ReasoningRequestFormat,
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +25,8 @@ pub struct OpenAiCompatibleSettings {
     pub model: String,
     pub base_url: String,
     pub api_key: String,
+    pub reasoning_effort: ReasoningEffort,
+    pub reasoning_request_format: ReasoningRequestFormat,
 }
 
 #[derive(Debug, Default)]
@@ -38,6 +43,8 @@ impl OpenAiCompatibleProvider {
             model: settings.model,
             base_url: normalize_base_url(&settings.base_url),
             api_key: settings.api_key,
+            reasoning_effort: settings.reasoning_effort,
+            reasoning_request_format: settings.reasoning_request_format,
         }
     }
 
@@ -48,12 +55,17 @@ impl OpenAiCompatibleProvider {
         tx: &mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<CompletionResult> {
         let url = chat_url(&self.base_url);
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": messages_to_openai(messages),
             "tools": tools_to_openai(tools),
             "stream": true
         });
+        apply_reasoning_request(
+            &mut body,
+            self.reasoning_effort,
+            self.reasoning_request_format,
+        );
         let resp = self
             .client
             .post(url)
@@ -201,6 +213,30 @@ fn reasoning_delta(delta: &Value) -> Option<(&'static str, &str)> {
                 .and_then(|v| v.as_str())
                 .map(|s| (field, s))
         })
+}
+
+fn apply_reasoning_request(
+    body: &mut Value,
+    effort: ReasoningEffort,
+    format: ReasoningRequestFormat,
+) {
+    let Some(effort) = effort.request_value() else {
+        return;
+    };
+    let Value::Object(obj) = body else {
+        return;
+    };
+    match format {
+        ReasoningRequestFormat::ReasoningEffort => {
+            obj.insert(
+                "reasoning_effort".to_string(),
+                Value::String(effort.to_string()),
+            );
+        }
+        ReasoningRequestFormat::ReasoningObject => {
+            obj.insert("reasoning".to_string(), json!({ "effort": effort }));
+        }
+    }
 }
 
 fn assistant_message_to_openai(

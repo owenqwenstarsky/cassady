@@ -1,6 +1,6 @@
 use crate::agent::{self, AgentEvent, AgentSettings};
 use crate::cli::{self, Command};
-use crate::config::{Config, ModelDefinition};
+use crate::config::{Config, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation};
 use crate::prompt;
 use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
@@ -96,6 +96,7 @@ async fn run_tui(
     let mut status = String::new();
     let mut show_full_tools = false;
     let mut show_reasoning = config.show_reasoning;
+    let mut reasoning_effort = ReasoningEffort::default_for_model(config.model_metadata.as_ref());
     let mut scroll: u16 = 0;
     let mut last_ctrl_c: Option<Instant> = None;
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
@@ -197,6 +198,7 @@ async fn run_tui(
                     busy: handle.is_some(),
                     show_full_tools,
                     show_reasoning,
+                    reasoning_effort,
                     scroll,
                     autofill: autofill.as_ref(),
                 },
@@ -232,10 +234,22 @@ async fn run_tui(
                             }
                         }
                         (KeyCode::Tab, _) => {
-                            if let Some(menu) = &autofill {
-                                if let Some(next_input) = menu.apply(&input) {
-                                    input = next_input;
-                                    autofill_selected = 0;
+                            if busy {
+                                status = "reasoning effort can be changed when idle".into();
+                            } else {
+                                let next =
+                                    reasoning_effort.next_for_model(config.model_metadata.as_ref());
+                                if next == reasoning_effort
+                                    && next == ReasoningEffort::Off
+                                    && !config
+                                        .model_metadata
+                                        .as_ref()
+                                        .is_some_and(|model| model.reasoning.supported)
+                                {
+                                    status = "reasoning unsupported for this model".into();
+                                } else {
+                                    reasoning_effort = next;
+                                    status.clear();
                                 }
                             }
                         }
@@ -374,6 +388,11 @@ async fn run_tui(
                                             status = "model can be changed when idle".into();
                                         } else {
                                             config.model = model.clone();
+                                            config.model_metadata =
+                                                model_metadata_for(&config, &model)?;
+                                            reasoning_effort = ReasoningEffort::default_for_model(
+                                                config.model_metadata.as_ref(),
+                                            );
                                             input.clear();
                                             autofill_selected = 0;
                                             transcript.push(TranscriptBlock {
@@ -507,6 +526,7 @@ async fn run_tui(
                                     config: config.clone(),
                                     cwd: cwd.clone(),
                                     mode,
+                                    reasoning_effort,
                                 };
                                 let convo = conversation.clone();
                                 let tx2 = tx.clone();
@@ -912,6 +932,16 @@ fn model_autofill(input: &str, selected: usize, config: &Config) -> Result<Optio
     }
 }
 
+fn model_metadata_for(config: &Config, model_id: &str) -> Result<Option<ModelDefinition>> {
+    let models = crate::config::load_or_create_default_model_registry(&config.root)?;
+    Ok(models
+        .models
+        .iter()
+        .find(|model| model.id == model_id && model.provider == config.provider_id)
+        .cloned()
+        .or_else(|| models.models.into_iter().find(|model| model.id == model_id)))
+}
+
 fn model_matches(model: &ModelDefinition, query: &str) -> bool {
     if query.is_empty() {
         return true;
@@ -946,6 +976,16 @@ fn model_detail(model: &ModelDefinition, current_model: &str) -> String {
     }
     if !model.supports_streaming {
         parts.push("no streaming".to_string());
+    }
+    if model.reasoning.supported {
+        let label = if model.reasoning.required {
+            format!("reasoning {} required", model.reasoning.default_effort)
+        } else {
+            format!("reasoning {}", model.reasoning.default_effort)
+        };
+        parts.push(label);
+    } else {
+        parts.push("no reasoning".to_string());
     }
     parts.join(" · ")
 }

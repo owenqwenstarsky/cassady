@@ -85,7 +85,13 @@ Example:
       "context_length": 262144,
       "max_output_tokens": 32768,
       "supports_tools": true,
-      "supports_streaming": true
+      "supports_streaming": true,
+      "reasoning": {
+        "supported": true,
+        "required": false,
+        "default_effort": "medium",
+        "request_format": "reasoning_effort"
+      }
     }
   ]
 }
@@ -100,6 +106,13 @@ Fields:
 - `max_output_tokens`: optional positive integer.
 - `supports_tools`: optional boolean, defaults to `true`.
 - `supports_streaming`: optional boolean, defaults to `true`.
+- `reasoning`: optional object. Defaults to reasoning support enabled with medium effort for model entries.
+  - `supported`: optional boolean, defaults to `true`. Set to `false` for models that do not accept reasoning controls.
+  - `required`: optional boolean, defaults to `false`. If `true`, Cass will not cycle reasoning effort to `off`.
+  - `default_effort`: optional `off`, `low`, `medium`, or `high`; defaults to `medium`. Cannot be `off` when `required` is `true`.
+  - `request_format`: optional `reasoning_effort` or `reasoning_object`; defaults to `reasoning_effort`. `reasoning_effort` sends a top-level `"reasoning_effort": "medium"`; `reasoning_object` sends `"reasoning": { "effort": "medium" }`.
+
+Reasoning effort is a runtime per-turn setting. Press `Tab` to cycle it while idle. For models with reasoning metadata, the default effort is `medium` unless overridden by `default_effort`; for models without metadata, reasoning starts `off`.
 
 ## Check configuration
 
