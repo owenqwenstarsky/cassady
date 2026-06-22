@@ -37,12 +37,7 @@ pub async fn run() -> Result<()> {
     let (conversation, warning) = if let Some(Some(id)) = cli.resume.clone() {
         Conversation::load(&config.conversations_dir(), &id)?
     } else {
-        let global = fs::read_to_string(config.global_path()).ok();
-        let base = prompt::build_base_system_prompt(global.as_deref());
-        (
-            Conversation::create(&config.conversations_dir(), &config.model, &cwd, base)?,
-            None,
-        )
+        (create_new_conversation(&config, &cwd)?, None)
     };
 
     run_tui(config, cwd, conversation, warning).await
@@ -55,6 +50,12 @@ fn resolve_cwd(cwd: Option<PathBuf>) -> Result<PathBuf> {
         .with_context(|| format!("resolving cwd {}", cwd.display()))?;
     std::env::set_current_dir(&cwd)?;
     Ok(cwd)
+}
+
+fn create_new_conversation(config: &Config, cwd: &Path) -> Result<Conversation> {
+    let global = fs::read_to_string(config.global_path()).ok();
+    let base = prompt::build_base_system_prompt(global.as_deref());
+    Conversation::create(&config.conversations_dir(), &config.model, cwd, base)
 }
 
 fn list_chats(config: &Config, cwd: &std::path::Path) -> Result<()> {
@@ -233,7 +234,7 @@ async fn run_tui(
                             status = if show_full_tools {
                                 "showing full tool output"
                             } else {
-                                "showing truncated tool output"
+                                "showing compact tool output"
                             }
                             .into();
                         }
@@ -302,6 +303,46 @@ async fn run_tui(
                                                     &transcript,
                                                     show_full_tools,
                                                 )?;
+                                            }
+                                        }
+                                    }
+                                    Ok(LocalCommand::New) => {
+                                        if busy {
+                                            status = "new chat can be created when idle".into();
+                                        } else {
+                                            match create_new_conversation(&config, &cwd) {
+                                                Ok(new_conversation) => {
+                                                    conversation = new_conversation;
+                                                    chat_id = conversation.id.clone();
+                                                    transcript.clear();
+                                                    input.clear();
+                                                    autofill_selected = 0;
+                                                    active_assistant = None;
+                                                    status = format!("new chat {chat_id}");
+                                                    stick_to_bottom = true;
+                                                    scroll = bottom_scroll(
+                                                        &terminal,
+                                                        &input,
+                                                        &transcript,
+                                                        show_full_tools,
+                                                    )?;
+                                                }
+                                                Err(err) => {
+                                                    status = format!("new chat failed: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "new".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                    if stick_to_bottom {
+                                                        scroll = bottom_scroll(
+                                                            &terminal,
+                                                            &input,
+                                                            &transcript,
+                                                            show_full_tools,
+                                                        )?;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -390,11 +431,19 @@ async fn run_tui(
                         (KeyCode::Up, _) => {
                             if let Some(menu) = &autofill {
                                 autofill_selected = menu.previous_index();
+                            } else {
+                                scroll = scroll.saturating_sub(1);
+                                stick_to_bottom = false;
                             }
                         }
                         (KeyCode::Down, _) => {
                             if let Some(menu) = &autofill {
                                 autofill_selected = menu.next_index();
+                            } else {
+                                let max =
+                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                                scroll = scroll.saturating_add(1).min(max);
+                                stick_to_bottom = scroll >= max;
                             }
                         }
                         (KeyCode::PageUp, _) => {
@@ -417,25 +466,18 @@ async fn run_tui(
                         _ => {}
                     }
                 }
-                Event::Mouse(mouse) => {
-                    let transcript_area =
-                        render::transcript_area(terminal_area(&terminal)?, &input);
-                    if rect_contains(transcript_area, mouse.column, mouse.row) {
-                        match mouse.kind {
-                            MouseEventKind::ScrollUp => {
-                                scroll = scroll.saturating_sub(5);
-                                stick_to_bottom = false;
-                            }
-                            MouseEventKind::ScrollDown => {
-                                let max =
-                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                                scroll = scroll.saturating_add(5).min(max);
-                                stick_to_bottom = scroll >= max;
-                            }
-                            _ => {}
-                        }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        scroll = scroll.saturating_sub(3);
+                        stick_to_bottom = false;
                     }
-                }
+                    MouseEventKind::ScrollDown => {
+                        let max = bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                        scroll = scroll.saturating_add(3).min(max);
+                        stick_to_bottom = scroll >= max;
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -500,7 +542,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             *ctx.active_assistant = None;
             ctx.transcript.push(TranscriptBlock {
                 kind: TranscriptKind::Tool,
-                title: format!("call: {name} ({})", short_call_id(&id)),
+                title: format!("{name} … ({})", short_call_id(&id)),
                 content: serde_json::to_string_pretty(&arguments)
                     .unwrap_or_else(|_| arguments.to_string()),
             });
@@ -519,7 +561,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
                     TranscriptKind::Error
                 },
                 title: format!(
-                    "result: {name} {} ({})",
+                    "{name} {} ({})",
                     if ok { "✓" } else { "✗" },
                     short_call_id(&id)
                 ),
@@ -590,9 +632,10 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
     a == b || (!a.trim().is_empty() && a.trim() == b.trim())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalCommand {
     Model(String),
+    New,
     Resume(String),
     Status,
 }
@@ -610,6 +653,12 @@ const COMMANDS: &[CommandSpec] = &[
         usage: "/model <model>",
         description: "switch the model for future turns",
         takes_value: true,
+    },
+    CommandSpec {
+        name: "new",
+        usage: "/new",
+        description: "create a new chat",
+        takes_value: false,
     },
     CommandSpec {
         name: "resume",
@@ -650,7 +699,10 @@ fn command_autofill(input: &str, selected: usize) -> Option<AutoFillMenu> {
     if !input.starts_with('/') || input[1..].chars().any(char::is_whitespace) {
         return None;
     }
-    if input == "/status" {
+    if COMMANDS
+        .iter()
+        .any(|spec| !spec.takes_value && input == format!("/{}", spec.name))
+    {
         return None;
     }
 
@@ -844,6 +896,12 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
             }
             Ok(LocalCommand::Resume(chat.to_string()))
         }
+        "/new" => {
+            if parts.next().is_some() {
+                return Err("usage: /new".into());
+            }
+            Ok(LocalCommand::New)
+        }
         "/status" => {
             if parts.next().is_some() {
                 return Err("usage: /status".into());
@@ -924,13 +982,6 @@ fn clamp_scroll(
     Ok(scroll.min(bottom_scroll(terminal, input, transcript, show_full_tools)?))
 }
 
-fn rect_contains(area: ratatui::layout::Rect, column: u16, row: u16) -> bool {
-    column >= area.x
-        && column < area.x.saturating_add(area.width)
-        && row >= area.y
-        && row < area.y.saturating_add(area.height)
-}
-
 fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock> {
     let mut blocks = Vec::new();
     for r in &conversation.records {
@@ -955,7 +1006,7 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
                 for call in tool_calls {
                     blocks.push(TranscriptBlock {
                         kind: TranscriptKind::Tool,
-                        title: format!("call: {} ({})", call.name, short_call_id(&call.id)),
+                        title: format!("{} … ({})", call.name, short_call_id(&call.id)),
                         content: serde_json::to_string_pretty(&call.arguments)
                             .unwrap_or_else(|_| call.arguments.to_string()),
                     });
@@ -974,7 +1025,7 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
                     TranscriptKind::Error
                 },
                 title: format!(
-                    "result: {name} {} ({})",
+                    "{name} {} ({})",
                     if *ok { "✓" } else { "✗" },
                     short_call_id(tool_call_id)
                 ),
@@ -1000,6 +1051,23 @@ mod tests {
             ..Config::default()
         };
         (root, config)
+    }
+
+    #[test]
+    fn command_autofill_lists_new_command_and_hides_exact_match() {
+        let menu = command_autofill("/n", 0).unwrap();
+
+        assert_eq!(menu.items.len(), 1);
+        assert_eq!(menu.items[0].label, "/new");
+        assert_eq!(menu.items[0].insert, "/new");
+        assert_eq!(menu.apply("/n").unwrap(), "/new");
+        assert!(command_autofill("/new", 0).is_none());
+    }
+
+    #[test]
+    fn parse_local_command_accepts_new_without_args() {
+        assert_eq!(parse_local_command("/new").unwrap(), LocalCommand::New);
+        assert_eq!(parse_local_command("/new extra"), Err("usage: /new".into()));
     }
 
     #[test]

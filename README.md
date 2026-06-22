@@ -63,20 +63,22 @@ cass check
 
 ## Keys
 
-- Type `/`: show command autocomplete
+- Type `/`: show command autocomplete, including command arguments like `/model <model>` and `/new`
 - `Up`/`Down`: move through an autocomplete menu
 - `Tab`/`Enter`: fill autocomplete selection
 - `Enter`: send message / run command when no autocomplete menu is open
 - `Ctrl-J`: insert newline
 - `Shift-Tab`: toggle read-only/full-access mode while idle
-- `Ctrl-O`: toggle truncated/full tool output display
-- `PageUp`/`PageDown` or mouse wheel: transcript scroll
+- `Ctrl-O`: toggle compact/full tool output display
+- `Up`/`Down` or mouse wheel: scroll transcript when no autocomplete menu is open
+- `PageUp`/`PageDown`: transcript scroll
 - `Ctrl-C` twice within 1.5 seconds: exit
 
 ## Commands
 
 - `cass check`: validate Cass config files
 - `/model <model>`: switch the model for future turns; model autocomplete lists entries from `~/.cass/models.json`
+- `/new`: create a new chat for the current directory
 - `/resume <chat>`: resume a saved chat; chat autocomplete lists chats for the current directory
 - `/status`: show current chat status
 
@@ -87,6 +89,8 @@ Resume this chat with: cass --resume <id>
 ```
 
 ## Tools
+
+Tool calls are shown compactly by default; press `Ctrl-O` to expand full tool output.
 
 Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd` and the bundled docs directory at `~/.cass/docs`.
 
