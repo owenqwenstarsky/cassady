@@ -1,5 +1,5 @@
 use crate::access::AccessMode;
-use crate::config::Config;
+use crate::config::{Config, ReasoningEffort};
 use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
 use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone)]
 pub enum AgentEvent {
     AssistantChunk(String),
+    ReasoningChunk(String),
     ToolCallStarted {
         id: String,
         name: String,
@@ -33,6 +34,7 @@ pub struct AgentSettings {
     pub config: Config,
     pub cwd: PathBuf,
     pub mode: AccessMode,
+    pub reasoning_effort: ReasoningEffort,
 }
 
 const EMPTY_FINAL_RETRY_PROMPT: &str = "The previous response contained no user-facing text. Provide a concise final user-facing response summarizing the outcome. Do not call tools unless absolutely necessary.";
@@ -60,10 +62,21 @@ pub async fn run_turn(
             return Ok(conversation);
         }
     };
+    let reasoning_request_format = settings
+        .config
+        .model_metadata
+        .as_ref()
+        .map(|model| model.reasoning.request_format)
+        .unwrap_or_default();
+    let reasoning_effort = settings
+        .reasoning_effort
+        .clamp_for_model(settings.config.model_metadata.as_ref());
     let provider = OpenAiCompatibleProvider::new(OpenAiCompatibleSettings {
         model: settings.config.model.clone(),
         base_url: settings.config.active_provider.base_url.clone(),
         api_key,
+        reasoning_effort,
+        reasoning_request_format,
     });
 
     let docs_dir = settings.config.docs_dir();
@@ -131,6 +144,8 @@ pub async fn run_turn(
 
         conversation.append(Record::Assistant {
             content: completion.content,
+            reasoning: completion.reasoning,
+            reasoning_field: completion.reasoning_field,
             tool_calls: tool_calls.clone(),
             ts: now_ts(),
         })?;
@@ -172,6 +187,8 @@ fn append_visible_assistant(
     let _ = tx.send(AgentEvent::AssistantChunk(content.clone()));
     conversation.append(Record::Assistant {
         content,
+        reasoning: String::new(),
+        reasoning_field: None,
         tool_calls: Vec::new(),
         ts: now_ts(),
     })
@@ -186,10 +203,14 @@ fn build_messages(records: &[Record], system: String, limit: usize) -> Vec<Model
             }),
             Record::Assistant {
                 content,
+                reasoning,
+                reasoning_field,
                 tool_calls,
                 ..
             } => non_system.push(ModelMessage::Assistant {
                 content: content.clone(),
+                reasoning: reasoning.clone(),
+                reasoning_field: reasoning_field.clone(),
                 tool_calls: tool_calls.clone(),
             }),
             Record::Tool {

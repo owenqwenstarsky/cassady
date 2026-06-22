@@ -1,9 +1,10 @@
 use crate::access::AccessMode;
+use crate::config::ReasoningEffort;
 use crate::ui::autofill::AutoFillMenu;
 use crate::ui::theme;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 
@@ -11,6 +12,7 @@ use unicode_width::UnicodeWidthChar;
 pub enum TranscriptKind {
     User,
     Assistant,
+    Reasoning,
     Tool,
     Status,
     Error,
@@ -35,96 +37,90 @@ pub struct RenderState<'a> {
     pub status: &'a str,
     pub busy: bool,
     pub show_full_tools: bool,
+    pub show_reasoning: bool,
+    pub reasoning_effort: ReasoningEffort,
     pub scroll: u16,
     pub autofill: Option<&'a AutoFillMenu>,
 }
 
 pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
-    let chunks = main_layout(f.area(), state.input);
+    let menu_height = autofill_height(state.autofill);
+    let chunks = main_layout(f.area(), state.input, menu_height);
 
-    let header = header_text(state, chunks[0].width as usize);
-    f.render_widget(Paragraph::new(header).style(theme::header()), chunks[0]);
-
-    let lines = transcript_lines_from(state.transcript, state.show_full_tools);
+    let lines = transcript_lines_from(
+        state.transcript,
+        state.show_full_tools,
+        state.show_reasoning,
+    );
     let effective_scroll = state.scroll.min(max_transcript_scroll(
         state.transcript,
         state.show_full_tools,
-        chunks[1],
+        state.show_reasoning,
+        chunks[0],
     ));
     let transcript = Paragraph::new(Text::from(lines))
-        .block(Block::default().borders(Borders::ALL).title(" Transcript "))
         .wrap(Wrap { trim: false })
         .scroll((effective_scroll, 0));
-    f.render_widget(transcript, chunks[1]);
-
-    let input_title = if state.busy {
-        " Input · waiting "
-    } else {
-        " Input "
-    };
-    let input = Paragraph::new(state.input.to_string())
-        .block(Block::default().borders(Borders::ALL).title(input_title))
-        .wrap(Wrap { trim: false });
-    f.render_widget(input, chunks[2]);
+    f.render_widget(transcript, chunks[0]);
 
     if let Some(menu) = state.autofill {
         render_autofill_menu(f, chunks[1], menu);
     }
 
-    let footer = truncate_end(
-        &format!(
-            " / commands | Shift-Tab mode | Tab/Enter fill | Enter send | Ctrl-J newline | Ctrl-O tools | scroll PgUp/PgDn/wheel | Ctrl-C twice exit  {}",
-            state.status
-        ),
-        chunks[3].width as usize,
-    );
-    f.render_widget(Paragraph::new(footer), chunks[3]);
+    let input =
+        Paragraph::new(Text::from(input_lines(state.input, state.busy))).wrap(Wrap { trim: false });
+    f.render_widget(input, chunks[2]);
+
+    let footer = truncate_end(&footer_text(state), chunks[3].width as usize);
+    f.render_widget(Paragraph::new(footer).style(theme::footer()), chunks[3]);
 }
 
 pub fn transcript_area(area: Rect, input: &str) -> Rect {
-    main_layout(area, input)[1]
+    main_layout(area, input, 0)[0]
 }
 
 pub fn max_transcript_scroll(
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
     area: Rect,
 ) -> u16 {
     // Paragraph::scroll is measured in rendered rows, not logical lines. Long
     // tool output and assistant messages wrap, so count rows with the same
     // word-wrapping behavior ratatui uses for Paragraph::wrap(trim: false).
-    let content_width = area.width.saturating_sub(2).max(1) as usize;
-    let row_count = transcript_lines_from(transcript, show_full_tools)
+    let content_width = area.width.max(1) as usize;
+    let row_count = transcript_lines_from(transcript, show_full_tools, show_reasoning)
         .iter()
         .map(|line| ratatui_wrapped_row_count(&line.to_string(), content_width))
         .sum::<usize>();
-    let viewport_rows = area.height.saturating_sub(2) as usize;
+    let viewport_rows = area.height as usize;
     row_count
         .saturating_sub(viewport_rows)
         .min(u16::MAX as usize) as u16
 }
 
-fn render_autofill_menu(f: &mut Frame<'_>, transcript_area: Rect, menu: &AutoFillMenu) {
-    if menu.items.is_empty() || transcript_area.height < 3 {
+fn main_layout(area: Rect, input: &str, menu_height: u16) -> std::rc::Rc<[Rect]> {
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(menu_height),
+            Constraint::Length(input_height(input)),
+            Constraint::Length(1),
+        ])
+        .split(area)
+}
+
+fn autofill_height(menu: Option<&AutoFillMenu>) -> u16 {
+    menu.map(|menu| menu.items.len().min(6) as u16).unwrap_or(0)
+}
+
+fn render_autofill_menu(f: &mut Frame<'_>, area: Rect, menu: &AutoFillMenu) {
+    if area.height == 0 || menu.items.is_empty() {
         return;
     }
 
-    let visible_items = menu
-        .items
-        .len()
-        .min(6)
-        .min(transcript_area.height as usize - 2);
-    if visible_items == 0 {
-        return;
-    }
-
-    let height = visible_items as u16 + 2;
-    let area = Rect::new(
-        transcript_area.x,
-        transcript_area.y + transcript_area.height.saturating_sub(height),
-        transcript_area.width,
-        height,
-    );
+    let visible_items = menu.items.len().min(area.height as usize).min(6);
     let selected = menu.selected_index().unwrap_or(0);
     let start = if selected >= visible_items {
         selected + 1 - visible_items
@@ -132,7 +128,7 @@ fn render_autofill_menu(f: &mut Frame<'_>, transcript_area: Rect, menu: &AutoFil
         0
     };
     let end = (start + visible_items).min(menu.items.len());
-    let line_width = area.width.saturating_sub(2) as usize;
+    let width = area.width as usize;
     let mut lines = Vec::new();
 
     for idx in start..end {
@@ -144,61 +140,34 @@ fn render_autofill_menu(f: &mut Frame<'_>, transcript_area: Rect, menu: &AutoFil
             text.push_str(detail);
         }
         let style = if idx == selected {
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            theme::selection()
         } else {
-            Style::default().fg(Color::Gray)
+            theme::menu()
         };
-        lines.push(Line::styled(truncate_end(&text, line_width), style));
+        lines.push(Line::styled(truncate_end(&text, width), style));
     }
 
-    let title = format!(
-        " {} {}/{} ",
-        menu.title,
-        selected.saturating_add(1),
-        menu.items.len()
-    );
-    let menu = Paragraph::new(Text::from(lines)).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(truncate_end(&title, area.width as usize)),
-    );
-    f.render_widget(Clear, area);
-    f.render_widget(menu, area);
-}
-
-fn main_layout(area: Rect, input: &str) -> std::rc::Rc<[Rect]> {
-    Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(5),
-            Constraint::Length(input_height(input)),
-            Constraint::Length(1),
-        ])
-        .split(area)
+    f.render_widget(Paragraph::new(Text::from(lines)), area);
 }
 
 fn transcript_lines_from(
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for block in transcript {
         if matches!(block.kind, TranscriptKind::Assistant) && block.content.trim().is_empty() {
             continue;
         }
+        if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
+            continue;
+        }
 
         let style = style_for(&block.kind);
-        lines.push(Line::from(vec![
-            Span::styled(symbol_for(&block.kind), style),
-            Span::raw(" "),
-            Span::styled(display_title(block), style),
-        ]));
+        lines.push(Line::styled(heading_for(block), style));
 
-        let content = display_content(block, show_full_tools);
+        let content = display_content(block, show_full_tools, show_reasoning);
         if !content.trim().is_empty() {
             for line in content.lines() {
                 lines.push(Line::raw(format!("  {}", sanitize_line(line))));
@@ -208,9 +177,29 @@ fn transcript_lines_from(
     }
     if lines.is_empty() {
         lines.push(Line::styled(
-            "Welcome to Cassady. Ask a question or request a code change.",
+            "Ask a question or request a code change.",
             Style::default().fg(Color::DarkGray),
         ));
+    }
+    lines
+}
+
+fn input_lines(input: &str, busy: bool) -> Vec<Line<'static>> {
+    let prefix = if busy { "… " } else { "› " };
+    if input.is_empty() {
+        return vec![Line::styled(prefix.to_string(), theme::input())];
+    }
+
+    let mut lines = Vec::new();
+    for (idx, line) in input.lines().enumerate() {
+        let marker = if idx == 0 { prefix } else { "  " };
+        lines.push(Line::styled(
+            format!("{marker}{}", sanitize_line(line)),
+            theme::input(),
+        ));
+    }
+    if input.ends_with('\n') {
+        lines.push(Line::styled("  ", theme::input()));
     }
     lines
 }
@@ -316,59 +305,65 @@ fn style_for(kind: &TranscriptKind) -> Style {
     match kind {
         TranscriptKind::User => theme::user(),
         TranscriptKind::Assistant => theme::assistant(),
+        TranscriptKind::Reasoning => theme::reasoning(),
         TranscriptKind::Tool => theme::tool(),
-        TranscriptKind::Status => Style::default().fg(Color::Blue),
+        TranscriptKind::Status => Style::default().fg(Color::DarkGray),
         TranscriptKind::Error => theme::error(),
     }
 }
 
-fn symbol_for(kind: &TranscriptKind) -> &'static str {
-    match kind {
-        TranscriptKind::User => "You",
-        TranscriptKind::Assistant => "Cass",
-        TranscriptKind::Tool => "Tool",
-        TranscriptKind::Status => "Info",
-        TranscriptKind::Error => "Error",
-    }
-}
-
-fn display_title(block: &TranscriptBlock) -> String {
+fn heading_for(block: &TranscriptBlock) -> String {
     match block.kind {
-        TranscriptKind::User => "message".into(),
-        TranscriptKind::Assistant => "response".into(),
-        TranscriptKind::Status => block.title.clone(),
-        TranscriptKind::Error => block.title.clone(),
-        TranscriptKind::Tool => block.title.clone(),
+        TranscriptKind::User => "› you".into(),
+        TranscriptKind::Assistant => "cass".into(),
+        TranscriptKind::Reasoning => "· reasoning".into(),
+        TranscriptKind::Tool => format!("· {}", block.title),
+        TranscriptKind::Status => {
+            if block.title.trim().is_empty() || block.title == "status" {
+                "· status".into()
+            } else {
+                format!("· {}", block.title)
+            }
+        }
+        TranscriptKind::Error => format!("! {}", block.title),
     }
 }
 
-fn display_content(block: &TranscriptBlock, show_full_tools: bool) -> String {
-    if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools && block.content.len() > 1200
-    {
-        let mut s = block.content.chars().take(1200).collect::<String>();
-        s.push_str("\n… truncated, press Ctrl-O to expand");
-        s
+fn display_content(block: &TranscriptBlock, show_full_tools: bool, show_reasoning: bool) -> String {
+    if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools {
+        String::new()
+    } else if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
+        String::new()
     } else {
         block.content.clone()
     }
 }
 
-fn header_text(state: &RenderState<'_>, width: usize) -> String {
-    let busy = if state.busy { "busy" } else { "idle" };
+fn footer_text(state: &RenderState<'_>) -> String {
+    let busy = if state.busy { "running" } else { "idle" };
     let mode = match state.mode {
         AccessMode::ReadOnly => "read-only",
         AccessMode::FullAccess => "full-access",
     };
-    let model = short_model(state.model);
-    let cwd = short_path(state.cwd);
-    let chat = short_chat_id(state.chat_id);
-    truncate_end(
-        &format!(
-            " {}  {} · {}  model={}  cwd={}  chat={}",
-            state.app_name, mode, busy, model, cwd, chat
-        ),
-        width,
-    )
+    let mut parts = vec![
+        state.app_name.to_ascii_lowercase(),
+        mode.to_string(),
+        busy.to_string(),
+        short_model(state.model),
+        short_path(state.cwd),
+        short_chat_id(state.chat_id),
+    ];
+    if state.show_full_tools {
+        parts.push("tools:full".into());
+    }
+    parts.push(format!("reasoning:{}", state.reasoning_effort));
+    if state.show_reasoning {
+        parts.push("reasoning:visible".into());
+    }
+    if !state.status.trim().is_empty() {
+        parts.push(state.status.trim().to_string());
+    }
+    parts.join(" · ")
 }
 
 fn short_model(model: &str) -> String {
@@ -445,8 +440,11 @@ fn truncate_middle(s: &str, max: usize) -> String {
 }
 
 fn input_height(input: &str) -> u16 {
-    let lines = input.lines().count().max(1) as u16;
-    (lines + 2).clamp(3, 8)
+    let mut lines = input.lines().count().max(1) as u16;
+    if input.ends_with('\n') {
+        lines = lines.saturating_add(1);
+    }
+    lines.clamp(1, 6)
 }
 
 #[cfg(test)]
@@ -460,9 +458,9 @@ mod tests {
             title: "response".into(),
             content: "12345 12345 12345".into(),
         }];
-        let area = Rect::new(0, 0, 12, 5);
+        let area = Rect::new(0, 0, 12, 3);
 
-        assert!(max_transcript_scroll(&transcript, false, area) > 0);
+        assert!(max_transcript_scroll(&transcript, false, false, area) > 0);
     }
 
     #[test]
@@ -474,7 +472,7 @@ mod tests {
         }];
         let area = Rect::new(0, 0, 80, 10);
 
-        assert_eq!(max_transcript_scroll(&transcript, false, area), 0);
+        assert_eq!(max_transcript_scroll(&transcript, false, false, area), 0);
     }
 
     #[test]
@@ -486,7 +484,7 @@ mod tests {
         let transcript = vec![
             TranscriptBlock {
                 kind: TranscriptKind::Tool,
-                title: "result: read ✓ (call_1)".into(),
+                title: "read ✓ (call_1)".into(),
                 content,
             },
             TranscriptBlock {
@@ -496,8 +494,8 @@ mod tests {
             },
         ];
         let area = Rect::new(0, 0, 80, 5);
-        let max = max_transcript_scroll(&transcript, false, area);
+        let max = max_transcript_scroll(&transcript, true, false, area);
 
-        assert!(max > 80, "max scroll too low: {max}");
+        assert!(max > 50, "max scroll was {max}");
     }
 }

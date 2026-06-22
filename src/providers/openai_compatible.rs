@@ -1,5 +1,6 @@
 use super::types::{CompletionResult, ModelMessage};
 use crate::agent::AgentEvent;
+use crate::config::{ReasoningEffort, ReasoningRequestFormat};
 use crate::conversation::StoredToolCall;
 use crate::tools::ToolSpec;
 use anyhow::{bail, Result};
@@ -15,6 +16,8 @@ pub struct OpenAiCompatibleProvider {
     model: String,
     base_url: String,
     api_key: String,
+    reasoning_effort: ReasoningEffort,
+    reasoning_request_format: ReasoningRequestFormat,
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +25,8 @@ pub struct OpenAiCompatibleSettings {
     pub model: String,
     pub base_url: String,
     pub api_key: String,
+    pub reasoning_effort: ReasoningEffort,
+    pub reasoning_request_format: ReasoningRequestFormat,
 }
 
 #[derive(Debug, Default)]
@@ -38,6 +43,8 @@ impl OpenAiCompatibleProvider {
             model: settings.model,
             base_url: normalize_base_url(&settings.base_url),
             api_key: settings.api_key,
+            reasoning_effort: settings.reasoning_effort,
+            reasoning_request_format: settings.reasoning_request_format,
         }
     }
 
@@ -48,12 +55,17 @@ impl OpenAiCompatibleProvider {
         tx: &mpsc::UnboundedSender<AgentEvent>,
     ) -> Result<CompletionResult> {
         let url = chat_url(&self.base_url);
-        let body = json!({
+        let mut body = json!({
             "model": self.model,
             "messages": messages_to_openai(messages),
             "tools": tools_to_openai(tools),
             "stream": true
         });
+        apply_reasoning_request(
+            &mut body,
+            self.reasoning_effort,
+            self.reasoning_request_format,
+        );
         let resp = self
             .client
             .post(url)
@@ -68,6 +80,8 @@ impl OpenAiCompatibleProvider {
         }
 
         let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut reasoning_field: Option<String> = None;
         let mut partials: BTreeMap<usize, PartialToolCall> = BTreeMap::new();
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
@@ -78,11 +92,25 @@ impl OpenAiCompatibleProvider {
             while let Some(pos) = buf.find("\n\n") {
                 let frame = buf[..pos].to_string();
                 buf = buf[pos + 2..].to_string();
-                process_frame(&frame, &mut content, &mut partials, tx)?;
+                process_frame(
+                    &frame,
+                    &mut content,
+                    &mut reasoning,
+                    &mut reasoning_field,
+                    &mut partials,
+                    tx,
+                )?;
             }
         }
         if !buf.trim().is_empty() {
-            process_frame(&buf, &mut content, &mut partials, tx)?;
+            process_frame(
+                &buf,
+                &mut content,
+                &mut reasoning,
+                &mut reasoning_field,
+                &mut partials,
+                tx,
+            )?;
         }
 
         let tool_calls = partials
@@ -101,6 +129,8 @@ impl OpenAiCompatibleProvider {
             .collect();
         Ok(CompletionResult {
             content,
+            reasoning,
+            reasoning_field,
             tool_calls,
         })
     }
@@ -109,6 +139,8 @@ impl OpenAiCompatibleProvider {
 fn process_frame(
     frame: &str,
     content: &mut String,
+    reasoning: &mut String,
+    reasoning_field: &mut Option<String>,
     partials: &mut BTreeMap<usize, PartialToolCall>,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<()> {
@@ -121,7 +153,7 @@ fn process_frame(
         if data == "[DONE]" {
             continue;
         }
-        handle_chunk(data, content, partials, tx)?;
+        handle_chunk(data, content, reasoning, reasoning_field, partials, tx)?;
     }
     Ok(())
 }
@@ -129,6 +161,8 @@ fn process_frame(
 fn handle_chunk(
     data: &str,
     content: &mut String,
+    reasoning: &mut String,
+    reasoning_field: &mut Option<String>,
     partials: &mut BTreeMap<usize, PartialToolCall>,
     tx: &mpsc::UnboundedSender<AgentEvent>,
 ) -> Result<()> {
@@ -141,6 +175,11 @@ fn handle_chunk(
         .or_else(|| choice.get("message"))
         .cloned()
         .unwrap_or(Value::Null);
+    if let Some((field, s)) = reasoning_delta(&delta) {
+        reasoning_field.get_or_insert_with(|| field.to_string());
+        reasoning.push_str(s);
+        let _ = tx.send(AgentEvent::ReasoningChunk(s.to_string()));
+    }
     if let Some(s) = delta.get("content").and_then(|c| c.as_str()) {
         content.push_str(s);
         let _ = tx.send(AgentEvent::AssistantChunk(s.to_string()));
@@ -165,24 +204,96 @@ fn handle_chunk(
     Ok(())
 }
 
-fn messages_to_openai(messages: Vec<ModelMessage>) -> Vec<Value> {
-    messages.into_iter().map(|m| match m {
-        ModelMessage::System { content } => json!({"role":"system", "content":content}),
-        ModelMessage::User { content } => json!({"role":"user", "content":content}),
-        ModelMessage::Assistant { content, tool_calls } => {
-            if tool_calls.is_empty() {
-                json!({"role":"assistant", "content":content})
-            } else {
-                let calls: Vec<_> = tool_calls.into_iter().map(|tc| json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.arguments.to_string()}
-                })).collect();
-                json!({"role":"assistant", "content": if content.is_empty() { Value::Null } else { Value::String(content) }, "tool_calls": calls})
-            }
+fn reasoning_delta(delta: &Value) -> Option<(&'static str, &str)> {
+    ["reasoning_content", "reasoning", "thinking", "thought"]
+        .into_iter()
+        .find_map(|field| {
+            delta
+                .get(field)
+                .and_then(|v| v.as_str())
+                .map(|s| (field, s))
+        })
+}
+
+fn apply_reasoning_request(
+    body: &mut Value,
+    effort: ReasoningEffort,
+    format: ReasoningRequestFormat,
+) {
+    let Some(effort) = effort.request_value() else {
+        return;
+    };
+    let Value::Object(obj) = body else {
+        return;
+    };
+    match format {
+        ReasoningRequestFormat::ReasoningEffort => {
+            obj.insert(
+                "reasoning_effort".to_string(),
+                Value::String(effort.to_string()),
+            );
         }
-        ModelMessage::Tool { tool_call_id, name: _, content } => json!({"role":"tool", "tool_call_id":tool_call_id, "content":content}),
-    }).collect()
+        ReasoningRequestFormat::ReasoningObject => {
+            obj.insert("reasoning".to_string(), json!({ "effort": effort }));
+        }
+    }
+}
+
+fn assistant_message_to_openai(
+    content: String,
+    reasoning: String,
+    reasoning_field: Option<String>,
+    tool_calls: Vec<StoredToolCall>,
+) -> Value {
+    let mut message = json!({"role":"assistant", "content":content});
+    if let Value::Object(ref mut obj) = message {
+        if !reasoning.trim().is_empty() {
+            let field = reasoning_field.unwrap_or_else(|| "reasoning_content".to_string());
+            obj.insert(field, Value::String(reasoning));
+        }
+        if !tool_calls.is_empty() {
+            let calls: Vec<_> = tool_calls
+                .into_iter()
+                .map(|tc| {
+                    json!({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.name, "arguments": tc.arguments.to_string()}
+                    })
+                })
+                .collect();
+            if obj
+                .get("content")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.is_empty())
+            {
+                obj.insert("content".to_string(), Value::Null);
+            }
+            obj.insert("tool_calls".to_string(), Value::Array(calls));
+        }
+    }
+    message
+}
+
+fn messages_to_openai(messages: Vec<ModelMessage>) -> Vec<Value> {
+    messages
+        .into_iter()
+        .map(|m| match m {
+            ModelMessage::System { content } => json!({"role":"system", "content":content}),
+            ModelMessage::User { content } => json!({"role":"user", "content":content}),
+            ModelMessage::Assistant {
+                content,
+                reasoning,
+                reasoning_field,
+                tool_calls,
+            } => assistant_message_to_openai(content, reasoning, reasoning_field, tool_calls),
+            ModelMessage::Tool {
+                tool_call_id,
+                name: _,
+                content,
+            } => json!({"role":"tool", "tool_call_id":tool_call_id, "content":content}),
+        })
+        .collect()
 }
 
 fn tools_to_openai(tools: Vec<ToolSpec>) -> Vec<Value> {

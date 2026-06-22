@@ -1,6 +1,6 @@
 use crate::agent::{self, AgentEvent, AgentSettings};
 use crate::cli::{self, Command};
-use crate::config::{Config, ModelDefinition};
+use crate::config::{Config, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation};
 use crate::prompt;
 use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
@@ -37,12 +37,7 @@ pub async fn run() -> Result<()> {
     let (conversation, warning) = if let Some(Some(id)) = cli.resume.clone() {
         Conversation::load(&config.conversations_dir(), &id)?
     } else {
-        let global = fs::read_to_string(config.global_path()).ok();
-        let base = prompt::build_base_system_prompt(global.as_deref());
-        (
-            Conversation::create(&config.conversations_dir(), &config.model, &cwd, base)?,
-            None,
-        )
+        (create_new_conversation(&config, &cwd)?, None)
     };
 
     run_tui(config, cwd, conversation, warning).await
@@ -55,6 +50,12 @@ fn resolve_cwd(cwd: Option<PathBuf>) -> Result<PathBuf> {
         .with_context(|| format!("resolving cwd {}", cwd.display()))?;
     std::env::set_current_dir(&cwd)?;
     Ok(cwd)
+}
+
+fn create_new_conversation(config: &Config, cwd: &Path) -> Result<Conversation> {
+    let global = fs::read_to_string(config.global_path()).ok();
+    let base = prompt::build_base_system_prompt(global.as_deref());
+    Conversation::create(&config.conversations_dir(), &config.model, cwd, base)
 }
 
 fn list_chats(config: &Config, cwd: &std::path::Path) -> Result<()> {
@@ -94,10 +95,13 @@ async fn run_tui(
     let mut mode = config.default_access_mode;
     let mut status = String::new();
     let mut show_full_tools = false;
+    let mut show_reasoning = config.show_reasoning;
+    let mut reasoning_effort = config.reasoning_effort;
     let mut scroll: u16 = 0;
     let mut last_ctrl_c: Option<Instant> = None;
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
     let mut active_assistant: Option<usize> = None;
+    let mut active_reasoning: Option<usize> = None;
     let mut stick_to_bottom = true;
     let mut chat_id = conversation.id.clone();
     let mut autofill_selected = 0usize;
@@ -110,9 +114,11 @@ async fn run_tui(
                 input: &input,
                 transcript: &mut transcript,
                 active_assistant: &mut active_assistant,
+                active_reasoning: &mut active_reasoning,
                 status: &mut status,
                 stick_to_bottom,
                 show_full_tools,
+                show_reasoning,
                 scroll: &mut scroll,
             },
         )?;
@@ -127,9 +133,11 @@ async fn run_tui(
                     input: &input,
                     transcript: &mut transcript,
                     active_assistant: &mut active_assistant,
+                    active_reasoning: &mut active_reasoning,
                     status: &mut status,
                     stick_to_bottom,
                     show_full_tools,
+                    show_reasoning,
                     scroll: &mut scroll,
                 },
             )?;
@@ -150,15 +158,29 @@ async fn run_tui(
                 }),
             }
             active_assistant = None;
+            active_reasoning = None;
             status = "idle".into();
         }
 
         let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
         autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
         scroll = if stick_to_bottom {
-            bottom_scroll(&terminal, &input, &transcript, show_full_tools)?
+            bottom_scroll(
+                &terminal,
+                &input,
+                &transcript,
+                show_full_tools,
+                show_reasoning,
+            )?
         } else {
-            clamp_scroll(&terminal, &input, &transcript, show_full_tools, scroll)?
+            clamp_scroll(
+                &terminal,
+                &input,
+                &transcript,
+                show_full_tools,
+                show_reasoning,
+                scroll,
+            )?
         };
 
         terminal.draw(|f| {
@@ -175,6 +197,8 @@ async fn run_tui(
                     status: &status,
                     busy: handle.is_some(),
                     show_full_tools,
+                    show_reasoning,
+                    reasoning_effort,
                     scroll,
                     autofill: autofill.as_ref(),
                 },
@@ -210,30 +234,111 @@ async fn run_tui(
                             }
                         }
                         (KeyCode::Tab, _) => {
-                            if let Some(menu) = &autofill {
-                                if let Some(next_input) = menu.apply(&input) {
-                                    input = next_input;
-                                    autofill_selected = 0;
+                            if busy {
+                                status = "reasoning effort can be changed when idle".into();
+                            } else {
+                                let next =
+                                    reasoning_effort.next_for_model(config.model_metadata.as_ref());
+                                if next == reasoning_effort
+                                    && next == ReasoningEffort::Off
+                                    && !config
+                                        .model_metadata
+                                        .as_ref()
+                                        .is_some_and(|model| model.reasoning.supported)
+                                {
+                                    status = "reasoning unsupported for this model".into();
+                                } else {
+                                    reasoning_effort = next;
+                                    let _ = crate::config::save_last_used(
+                                        &config.root,
+                                        &config.model,
+                                        reasoning_effort,
+                                    );
+                                    status.clear();
                                 }
                             }
                         }
                         (KeyCode::Char('o'), m) if m.contains(KeyModifiers::CONTROL) => {
                             show_full_tools = !show_full_tools;
                             scroll = if stick_to_bottom {
-                                bottom_scroll(&terminal, &input, &transcript, show_full_tools)?
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
                             } else {
                                 clamp_scroll(
                                     &terminal,
                                     &input,
                                     &transcript,
                                     show_full_tools,
+                                    show_reasoning,
                                     scroll,
                                 )?
                             };
                             status = if show_full_tools {
                                 "showing full tool output"
                             } else {
-                                "showing truncated tool output"
+                                "showing compact tool output"
+                            }
+                            .into();
+                        }
+                        (KeyCode::Char('R'), m) if m.contains(KeyModifiers::CONTROL) => {
+                            show_reasoning = !show_reasoning;
+                            scroll = if stick_to_bottom {
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
+                            } else {
+                                clamp_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                    scroll,
+                                )?
+                            };
+                            status = if show_reasoning {
+                                "showing reasoning"
+                            } else {
+                                "hiding reasoning"
+                            }
+                            .into();
+                        }
+                        (KeyCode::Char('r'), m)
+                            if m.contains(KeyModifiers::CONTROL)
+                                && m.contains(KeyModifiers::SHIFT) =>
+                        {
+                            show_reasoning = !show_reasoning;
+                            scroll = if stick_to_bottom {
+                                bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?
+                            } else {
+                                clamp_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                    scroll,
+                                )?
+                            };
+                            status = if show_reasoning {
+                                "showing reasoning"
+                            } else {
+                                "hiding reasoning"
                             }
                             .into();
                         }
@@ -279,6 +384,7 @@ async fn run_tui(
                                                 &input,
                                                 &transcript,
                                                 show_full_tools,
+                                                show_reasoning,
                                             )?;
                                         }
                                     }
@@ -287,6 +393,16 @@ async fn run_tui(
                                             status = "model can be changed when idle".into();
                                         } else {
                                             config.model = model.clone();
+                                            config.model_metadata =
+                                                model_metadata_for(&config, &model)?;
+                                            reasoning_effort = ReasoningEffort::default_for_model(
+                                                config.model_metadata.as_ref(),
+                                            );
+                                            let _ = crate::config::save_last_used(
+                                                &config.root,
+                                                &config.model,
+                                                reasoning_effort,
+                                            );
                                             input.clear();
                                             autofill_selected = 0;
                                             transcript.push(TranscriptBlock {
@@ -301,7 +417,51 @@ async fn run_tui(
                                                     &input,
                                                     &transcript,
                                                     show_full_tools,
+                                                    show_reasoning,
                                                 )?;
+                                            }
+                                        }
+                                    }
+                                    Ok(LocalCommand::New) => {
+                                        if busy {
+                                            status = "new chat can be created when idle".into();
+                                        } else {
+                                            match create_new_conversation(&config, &cwd) {
+                                                Ok(new_conversation) => {
+                                                    conversation = new_conversation;
+                                                    chat_id = conversation.id.clone();
+                                                    transcript.clear();
+                                                    input.clear();
+                                                    autofill_selected = 0;
+                                                    active_assistant = None;
+                                                    active_reasoning = None;
+                                                    status = format!("new chat {chat_id}");
+                                                    stick_to_bottom = true;
+                                                    scroll = bottom_scroll(
+                                                        &terminal,
+                                                        &input,
+                                                        &transcript,
+                                                        show_full_tools,
+                                                        show_reasoning,
+                                                    )?;
+                                                }
+                                                Err(err) => {
+                                                    status = format!("new chat failed: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "new".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                    if stick_to_bottom {
+                                                        scroll = bottom_scroll(
+                                                            &terminal,
+                                                            &input,
+                                                            &transcript,
+                                                            show_full_tools,
+                                                            show_reasoning,
+                                                        )?;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -323,6 +483,7 @@ async fn run_tui(
                                                     input.clear();
                                                     autofill_selected = 0;
                                                     active_assistant = None;
+                                                    active_reasoning = None;
                                                     status = format!("resumed chat {chat_id}");
                                                     stick_to_bottom = true;
                                                     scroll = bottom_scroll(
@@ -330,6 +491,7 @@ async fn run_tui(
                                                         &input,
                                                         &transcript,
                                                         show_full_tools,
+                                                        show_reasoning,
                                                     )?;
                                                 }
                                                 Err(err) => {
@@ -345,6 +507,7 @@ async fn run_tui(
                                                             &input,
                                                             &transcript,
                                                             show_full_tools,
+                                                            show_reasoning,
                                                         )?;
                                                     }
                                                 }
@@ -367,11 +530,13 @@ async fn run_tui(
                                     content: msg.clone(),
                                 });
                                 active_assistant = None;
+                                active_reasoning = None;
                                 status = "running".into();
                                 let settings = AgentSettings {
                                     config: config.clone(),
                                     cwd: cwd.clone(),
                                     mode,
+                                    reasoning_effort,
                                 };
                                 let convo = conversation.clone();
                                 let tx2 = tx.clone();
@@ -379,8 +544,13 @@ async fn run_tui(
                                     agent::run_turn(convo, msg, settings, tx2).await
                                 }));
                                 stick_to_bottom = true;
-                                scroll =
-                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                                scroll = bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?;
                             }
                         }
                         (KeyCode::Backspace, _) => {
@@ -390,11 +560,24 @@ async fn run_tui(
                         (KeyCode::Up, _) => {
                             if let Some(menu) = &autofill {
                                 autofill_selected = menu.previous_index();
+                            } else {
+                                scroll = scroll.saturating_sub(1);
+                                stick_to_bottom = false;
                             }
                         }
                         (KeyCode::Down, _) => {
                             if let Some(menu) = &autofill {
                                 autofill_selected = menu.next_index();
+                            } else {
+                                let max = bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?;
+                                scroll = scroll.saturating_add(1).min(max);
+                                stick_to_bottom = scroll >= max;
                             }
                         }
                         (KeyCode::PageUp, _) => {
@@ -402,8 +585,13 @@ async fn run_tui(
                             stick_to_bottom = false;
                         }
                         (KeyCode::PageDown, _) => {
-                            let max =
-                                bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
+                            let max = bottom_scroll(
+                                &terminal,
+                                &input,
+                                &transcript,
+                                show_full_tools,
+                                show_reasoning,
+                            )?;
                             scroll = scroll.saturating_add(10).min(max);
                             stick_to_bottom = scroll >= max;
                         }
@@ -417,25 +605,24 @@ async fn run_tui(
                         _ => {}
                     }
                 }
-                Event::Mouse(mouse) => {
-                    let transcript_area =
-                        render::transcript_area(terminal_area(&terminal)?, &input);
-                    if rect_contains(transcript_area, mouse.column, mouse.row) {
-                        match mouse.kind {
-                            MouseEventKind::ScrollUp => {
-                                scroll = scroll.saturating_sub(5);
-                                stick_to_bottom = false;
-                            }
-                            MouseEventKind::ScrollDown => {
-                                let max =
-                                    bottom_scroll(&terminal, &input, &transcript, show_full_tools)?;
-                                scroll = scroll.saturating_add(5).min(max);
-                                stick_to_bottom = scroll >= max;
-                            }
-                            _ => {}
-                        }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        scroll = scroll.saturating_sub(3);
+                        stick_to_bottom = false;
                     }
-                }
+                    MouseEventKind::ScrollDown => {
+                        let max = bottom_scroll(
+                            &terminal,
+                            &input,
+                            &transcript,
+                            show_full_tools,
+                            show_reasoning,
+                        )?;
+                        scroll = scroll.saturating_add(3).min(max);
+                        stick_to_bottom = scroll >= max;
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
@@ -454,9 +641,11 @@ struct AgentEventContext<'a> {
     input: &'a str,
     transcript: &'a mut Vec<TranscriptBlock>,
     active_assistant: &'a mut Option<usize>,
+    active_reasoning: &'a mut Option<usize>,
     status: &'a mut String,
     stick_to_bottom: bool,
     show_full_tools: bool,
+    show_reasoning: bool,
     scroll: &'a mut u16,
 }
 
@@ -492,15 +681,36 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             ctx.transcript[idx].content.push_str(&s);
             update_bottom_scroll(ctx)?;
         }
+        AgentEvent::ReasoningChunk(s) => {
+            if ctx.active_reasoning.is_none() && s.trim().is_empty() {
+                return Ok(());
+            }
+            let idx = match *ctx.active_reasoning {
+                Some(i) => i,
+                None => {
+                    ctx.transcript.push(TranscriptBlock {
+                        kind: TranscriptKind::Reasoning,
+                        title: "reasoning".into(),
+                        content: String::new(),
+                    });
+                    let i = ctx.transcript.len() - 1;
+                    *ctx.active_reasoning = Some(i);
+                    i
+                }
+            };
+            ctx.transcript[idx].content.push_str(&s);
+            update_bottom_scroll(ctx)?;
+        }
         AgentEvent::ToolCallStarted {
             id,
             name,
             arguments,
         } => {
             *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
             ctx.transcript.push(TranscriptBlock {
                 kind: TranscriptKind::Tool,
-                title: format!("call: {name} ({})", short_call_id(&id)),
+                title: format!("{name} … ({})", short_call_id(&id)),
                 content: serde_json::to_string_pretty(&arguments)
                     .unwrap_or_else(|_| arguments.to_string()),
             });
@@ -519,7 +729,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
                     TranscriptKind::Error
                 },
                 title: format!(
-                    "result: {name} {} ({})",
+                    "{name} {} ({})",
                     if ok { "✓" } else { "✗" },
                     short_call_id(&id)
                 ),
@@ -537,6 +747,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
         }
         AgentEvent::TurnFinished => {
             *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
             *ctx.status = "turn finished".into();
         }
     }
@@ -545,7 +756,13 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
 
 fn update_bottom_scroll(ctx: &mut AgentEventContext<'_>) -> Result<()> {
     if ctx.stick_to_bottom {
-        *ctx.scroll = bottom_scroll(ctx.terminal, ctx.input, ctx.transcript, ctx.show_full_tools)?;
+        *ctx.scroll = bottom_scroll(
+            ctx.terminal,
+            ctx.input,
+            ctx.transcript,
+            ctx.show_full_tools,
+            ctx.show_reasoning,
+        )?;
     }
     Ok(())
 }
@@ -590,9 +807,10 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
     a == b || (!a.trim().is_empty() && a.trim() == b.trim())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalCommand {
     Model(String),
+    New,
     Resume(String),
     Status,
 }
@@ -610,6 +828,12 @@ const COMMANDS: &[CommandSpec] = &[
         usage: "/model <model>",
         description: "switch the model for future turns",
         takes_value: true,
+    },
+    CommandSpec {
+        name: "new",
+        usage: "/new",
+        description: "create a new chat",
+        takes_value: false,
     },
     CommandSpec {
         name: "resume",
@@ -650,7 +874,10 @@ fn command_autofill(input: &str, selected: usize) -> Option<AutoFillMenu> {
     if !input.starts_with('/') || input[1..].chars().any(char::is_whitespace) {
         return None;
     }
-    if input == "/status" {
+    if COMMANDS
+        .iter()
+        .any(|spec| !spec.takes_value && input == format!("/{}", spec.name))
+    {
         return None;
     }
 
@@ -715,6 +942,16 @@ fn model_autofill(input: &str, selected: usize, config: &Config) -> Result<Optio
     }
 }
 
+fn model_metadata_for(config: &Config, model_id: &str) -> Result<Option<ModelDefinition>> {
+    let models = crate::config::load_or_create_default_model_registry(&config.root)?;
+    Ok(models
+        .models
+        .iter()
+        .find(|model| model.id == model_id && model.provider == config.provider_id)
+        .cloned()
+        .or_else(|| models.models.into_iter().find(|model| model.id == model_id)))
+}
+
 fn model_matches(model: &ModelDefinition, query: &str) -> bool {
     if query.is_empty() {
         return true;
@@ -749,6 +986,16 @@ fn model_detail(model: &ModelDefinition, current_model: &str) -> String {
     }
     if !model.supports_streaming {
         parts.push("no streaming".to_string());
+    }
+    if model.reasoning.supported {
+        let label = if model.reasoning.required {
+            format!("reasoning {} required", model.reasoning.default_effort)
+        } else {
+            format!("reasoning {}", model.reasoning.default_effort)
+        };
+        parts.push(label);
+    } else {
+        parts.push("no reasoning".to_string());
     }
     parts.join(" · ")
 }
@@ -844,6 +1091,12 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
             }
             Ok(LocalCommand::Resume(chat.to_string()))
         }
+        "/new" => {
+            if parts.next().is_some() {
+                return Err("usage: /new".into());
+            }
+            Ok(LocalCommand::New)
+        }
         "/status" => {
             if parts.next().is_some() {
                 return Err("usage: /status".into());
@@ -905,11 +1158,13 @@ fn bottom_scroll(
     input: &str,
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
 ) -> Result<u16> {
     let area = render::transcript_area(terminal_area(terminal)?, input);
     Ok(render::max_transcript_scroll(
         transcript,
         show_full_tools,
+        show_reasoning,
         area,
     ))
 }
@@ -919,16 +1174,16 @@ fn clamp_scroll(
     input: &str,
     transcript: &[TranscriptBlock],
     show_full_tools: bool,
+    show_reasoning: bool,
     scroll: u16,
 ) -> Result<u16> {
-    Ok(scroll.min(bottom_scroll(terminal, input, transcript, show_full_tools)?))
-}
-
-fn rect_contains(area: ratatui::layout::Rect, column: u16, row: u16) -> bool {
-    column >= area.x
-        && column < area.x.saturating_add(area.width)
-        && row >= area.y
-        && row < area.y.saturating_add(area.height)
+    Ok(scroll.min(bottom_scroll(
+        terminal,
+        input,
+        transcript,
+        show_full_tools,
+        show_reasoning,
+    )?))
 }
 
 fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock> {
@@ -942,9 +1197,17 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
             }),
             conversation::Record::Assistant {
                 content,
+                reasoning,
                 tool_calls,
                 ..
             } => {
+                if !reasoning.trim().is_empty() {
+                    blocks.push(TranscriptBlock {
+                        kind: TranscriptKind::Reasoning,
+                        title: "reasoning".into(),
+                        content: reasoning.clone(),
+                    });
+                }
                 if !content.trim().is_empty() {
                     blocks.push(TranscriptBlock {
                         kind: TranscriptKind::Assistant,
@@ -955,7 +1218,7 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
                 for call in tool_calls {
                     blocks.push(TranscriptBlock {
                         kind: TranscriptKind::Tool,
-                        title: format!("call: {} ({})", call.name, short_call_id(&call.id)),
+                        title: format!("{} … ({})", call.name, short_call_id(&call.id)),
                         content: serde_json::to_string_pretty(&call.arguments)
                             .unwrap_or_else(|_| call.arguments.to_string()),
                     });
@@ -974,7 +1237,7 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
                     TranscriptKind::Error
                 },
                 title: format!(
-                    "result: {name} {} ({})",
+                    "{name} {} ({})",
                     if *ok { "✓" } else { "✗" },
                     short_call_id(tool_call_id)
                 ),
@@ -1000,6 +1263,23 @@ mod tests {
             ..Config::default()
         };
         (root, config)
+    }
+
+    #[test]
+    fn command_autofill_lists_new_command_and_hides_exact_match() {
+        let menu = command_autofill("/n", 0).unwrap();
+
+        assert_eq!(menu.items.len(), 1);
+        assert_eq!(menu.items[0].label, "/new");
+        assert_eq!(menu.items[0].insert, "/new");
+        assert_eq!(menu.apply("/n").unwrap(), "/new");
+        assert!(command_autofill("/new", 0).is_none());
+    }
+
+    #[test]
+    fn parse_local_command_accepts_new_without_args() {
+        assert_eq!(parse_local_command("/new").unwrap(), LocalCommand::New);
+        assert_eq!(parse_local_command("/new extra"), Err("usage: /new".into()));
     }
 
     #[test]
@@ -1065,6 +1345,8 @@ mod tests {
             path: PathBuf::new(),
             records: vec![conversation::Record::Assistant {
                 content: "Done.".into(),
+                reasoning: String::new(),
+                reasoning_field: None,
                 tool_calls: Vec::new(),
                 ts: "now".into(),
             }],
@@ -1096,6 +1378,8 @@ mod tests {
             path: PathBuf::new(),
             records: vec![conversation::Record::Assistant {
                 content: "\nDone.".into(),
+                reasoning: String::new(),
+                reasoning_field: None,
                 tool_calls: Vec::new(),
                 ts: "now".into(),
             }],

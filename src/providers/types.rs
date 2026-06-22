@@ -12,6 +12,10 @@ pub enum ModelMessage {
     },
     Assistant {
         content: String,
+        #[serde(default)]
+        reasoning: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_field: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<StoredToolCall>,
     },
@@ -25,5 +29,7 @@ pub enum ModelMessage {
 #[derive(Debug, Clone, Default)]
 pub struct CompletionResult {
     pub content: String,
+    pub reasoning: String,
+    pub reasoning_field: Option<String>,
     pub tool_calls: Vec<StoredToolCall>,
 }
