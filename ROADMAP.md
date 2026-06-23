@@ -6,7 +6,7 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
 
 ### Agent Control
 
-- [ ] **Turn cancellation.** Allow the user to stop a running turn without exiting Cass.
+- [x] **Turn cancellation.** Allow the user to stop a running turn without exiting Cass.
   - While the agent is busy, the first `Ctrl-C` should cancel the active turn.
   - A second `Ctrl-C` can retain the existing exit behavior.
   - You should also be able to press `Esc` to cancel but not exit.

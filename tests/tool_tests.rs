@@ -201,6 +201,29 @@ async fn shell_streams_output_chunks() {
     assert!(streamed.contains("stderr:err"));
 }
 
+#[tokio::test]
+async fn aborting_shell_tool_stops_command_before_completion() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("marker");
+    let context = ctx(dir.path(), AccessMode::FullAccess);
+    let command = "sleep 1; touch marker";
+
+    let handle = tokio::spawn(async move {
+        tools::execute(
+            "shell",
+            json!({"command": command, "timeout": 10}),
+            &context,
+        )
+        .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    handle.abort();
+    assert!(handle.await.unwrap_err().is_cancelled());
+
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    assert!(!marker.exists());
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn full_access_blocks_writes_through_symlinked_docs_dir() {

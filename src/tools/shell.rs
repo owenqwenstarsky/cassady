@@ -39,6 +39,7 @@ pub async fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     cmd.current_dir(&ctx.cwd);
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
 
     let mut child = cmd.spawn().context("spawning shell command")?;
     let stdout = child.stdout.take().context("capturing command stdout")?;
