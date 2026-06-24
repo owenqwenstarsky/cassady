@@ -1,6 +1,6 @@
 # Cassady (Cass) Roadmap
 
-## v0.2.0 — Control, Context, and Observability
+## v0.2.0 — Control, Context, and Observability ✅ Completed
 
 This release focuses on making Cass easier to interrupt, easier to audit, and safer to run on real projects. Large provider expansions and broad protocol integrations are intentionally deferred.
 
