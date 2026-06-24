@@ -1,102 +1,8 @@
 # Cassady (Cass) Roadmap
 
-## v0.2.4 — Windows CLI Usability
+## v0.2.3 — Documentation and README Refresh ✅ Completed
 
-This release focuses on making Cassady feel reliable and native when the CLI is run on Windows. It covers runtime usability after `cass` or `cassady` is already available on the machine; installers, package managers, PATH setup, code signing, and update delivery are intentionally out of scope.
-
-### Terminal Experience
-
-- [ ] **Make interactive rendering robust in Windows terminals.** Ensure chat, setup, confirmation prompts, streamed output, spinners, diffs, and tool summaries render cleanly in Windows Terminal, PowerShell, Command Prompt, and common VS Code integrated terminals.
-  - Enable or gracefully detect ANSI/VT support instead of emitting broken escape sequences.
-  - Respect `NO_COLOR`, non-interactive output, redirected stdout/stderr, and narrow terminal widths.
-  - Avoid relying on glyphs, emoji, box drawing, or cursor control sequences that render poorly on default Windows fonts.
-  - Keep wrapping and cursor positioning correct for multi-line input, Markdown output, and long tool-call summaries.
-
-- [ ] **Harden keyboard handling on Windows.** Make the TUI and prompts respond predictably to Windows console input events.
-  - Verify `Enter`, `Backspace`, `Delete`, arrow keys, `Home`, `End`, `PageUp`, `PageDown`, `Tab`, and paste behavior.
-  - Preserve existing `Ctrl-C` cancellation semantics and handle `Ctrl-Break`/console close events gracefully where supported.
-  - Ensure `Esc` cancellation and prompt dismissal work consistently across PowerShell, Command Prompt, and Windows Terminal.
-
-- [ ] **Improve plain CLI output for Windows users.** Commands such as `cass check`, setup diagnostics, validation errors, and usage text should remain readable without a fully interactive terminal.
-  - Prefer actionable Windows examples using PowerShell syntax when the current platform is Windows.
-  - Avoid POSIX-only command snippets in runtime guidance unless explicitly labeled.
-  - Keep error messages copy/paste-friendly and free of terminal control characters when output is redirected.
-
-### Windows Paths and Files
-
-- [ ] **Support Windows path syntax everywhere the CLI accepts paths.** Normalize and validate paths consistently across arguments, tool calls, diffs, session metadata, and model-visible file references.
-  - Handle drive-letter paths such as `C:\Users\name\project`, rooted paths such as `\temp`, UNC paths such as `\\server\share\repo`, and mixed `/`/`\` separators.
-  - Preserve user-facing paths in a readable Windows form while using canonicalized paths for safety decisions.
-  - Avoid treating `:` in drive letters as URL schemes or command separators.
-  - Add tests for relative path resolution from Windows workspaces and for paths containing spaces, apostrophes, parentheses, brackets, and non-ASCII characters.
-
-- [ ] **Respect Windows filesystem semantics in workspace policy.** Keep read, write, edit, and shell safety checks correct on NTFS and common Windows filesystems.
-  - Account for case-insensitive path comparisons, symlinks, junctions, directory symlinks, and network shares.
-  - Prevent workspace escapes through `..`, junctions, symlink targets, alternate path spellings, and UNC aliases.
-  - Handle reserved device names, trailing dots/spaces, invalid filename characters, and long-path edge cases with clear errors.
-  - Preserve current access modes (`read-only`, `workspace-edit`, `full-access`) with Windows-specific authorization tests.
-
-- [ ] **Handle line endings and encodings cleanly.** Make file reads, edits, diffs, and generated files predictable on Windows projects.
-  - Preserve existing CRLF/LF style when editing files where practical.
-  - Render diffs clearly even when files use CRLF line endings.
-  - Avoid corrupting UTF-8 with BOM, UTF-16, or non-UTF-8 files; detect unsupported text encodings and explain the limitation.
-  - Keep binary-file detection reliable for Windows executables, images, archives, and generated build artifacts.
-
-### Shell and Process Integration
-
-- [ ] **Use the right shell behavior on Windows.** Make `shell` tool execution, approval prompts, command summaries, cancellation, and exit status reporting work with Windows process semantics.
-  - Prefer PowerShell-friendly examples and diagnostics while still supporting `cmd.exe`-style commands when users provide them.
-  - Quote paths with spaces safely and avoid POSIX-only escaping in Windows-generated commands.
-  - Surface the actual executable, working directory, exit code, stdout, and stderr in a way users can debug.
-  - Cancel long-running child processes cleanly, including process trees where possible.
-
-- [ ] **Normalize environment-variable handling.** Ensure provider API key checks, diagnostics, setup guidance, and spawned tools work with Windows environment conventions.
-  - Treat environment variable names consistently despite Windows case-insensitive lookup behavior.
-  - Show PowerShell examples such as `$env:OPENAI_API_KEY = "..."` for temporary values.
-  - Avoid relying on POSIX shell expansion, `export`, `$VAR`, or `~` in Windows-specific guidance.
-
-- [ ] **Support common Windows external commands and editors.** When Cassady suggests or launches helper commands, make the behavior compatible with typical Windows environments.
-  - Detect missing tools and explain alternatives rather than assuming Unix utilities are present.
-  - Avoid hard dependencies on `sh`, `bash`, `grep`, `sed`, `cat`, `less`, or `/tmp` during normal CLI operation.
-  - Respect configured editor/browser commands and quote file paths correctly when opening files or URLs.
-
-### Config, State, and Session Usability
-
-- [ ] **Use Windows-appropriate runtime locations.** Keep config, logs, caches, sessions, temporary files, and diagnostics in locations that align with Windows conventions.
-  - Prefer the existing cross-platform directory abstraction where available, and verify behavior with `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `USERPROFILE`.
-  - Expand `~` and environment-derived paths consistently in config values.
-  - Keep session history portable enough to display Windows paths without breaking transcript replay.
-
-- [ ] **Make diagnostics expose Windows-specific context.** Improve `cass check` and error reports so Windows users can understand terminal, filesystem, shell, and config problems quickly.
-  - Include OS, architecture, terminal detection, active shell, config path, workspace path, and access mode when relevant.
-  - Clearly distinguish provider/API-key failures from Windows runtime issues.
-  - Recommend Windows-native remediation steps without mentioning installation tasks.
-
-- [ ] **Keep aliases and command parsing consistent.** Ensure `cass` and `cassady` subcommands, flags, config overrides, and path arguments behave the same on Windows as on Unix-like systems.
-  - Validate quoting behavior for arguments containing spaces and backslashes.
-  - Ensure help text and examples do not imply shell features unavailable in PowerShell or Command Prompt.
-  - Keep machine-readable output stable across platforms when output is consumed by scripts.
-
-### Verification and Documentation
-
-- [ ] **Add Windows-focused automated coverage.** Add unit and integration tests that exercise Windows path parsing, policy checks, config discovery, line endings, environment variables, and command rendering.
-  - Use platform-gated tests for behavior that can only run on Windows.
-  - Add platform-independent tests for Windows path strings where possible.
-  - Include regression tests for spaces in paths, UNC paths, CRLF edits, and workspace escape attempts.
-
-- [ ] **Run a manual Windows CLI acceptance pass.** Validate the release on a real Windows environment, not just cross-compilation.
-  - Test PowerShell, Command Prompt, Windows Terminal, and VS Code integrated terminal.
-  - Exercise interactive chat, first-run setup, `cass check`, tool approvals, file read/edit/diff, shell cancellation, and redirected output.
-  - Record any unsupported terminal or shell behavior as explicit known limitations.
-
-- [ ] **Update runtime documentation for Windows usage.** Refresh README and bundled docs with Windows-specific CLI usage guidance while avoiding installation instructions.
-  - Document PowerShell environment-variable examples, path examples, terminal expectations, and known limitations.
-  - Include troubleshooting for broken colors, bad wrapping, path authorization failures, CRLF diffs, and missing Unix helper commands.
-  - Keep all Windows guidance consistent with existing access modes and safety policies.
-
-## v0.2.3 — Documentation and README Refresh
-
-This release focuses on making Cassady understandable, trustworthy, and easy to operate by rewriting the README and bringing all bundled documentation up to date with the current CLI behavior. The work should cover user-facing documentation only; broad CLI feature work and Windows-specific runtime improvements are deferred to v0.2.4. See `plans/V0_2_3_DOCUMENTATION_README_REFRESH_PLAN.md`.
+This release focuses on making Cassady understandable, trustworthy, and easy to operate by rewriting the README and bringing all bundled documentation up to date with the current CLI behavior. The work should cover user-facing documentation only; broad CLI feature work and Windows-specific runtime improvements are deferred to the planned Windows CLI usability work. See `plans/V0_2_3_DOCUMENTATION_README_REFRESH_PLAN.md`.
 
 ### README Rewrite
 
@@ -156,9 +62,9 @@ This release focuses on making Cassady understandable, trustworthy, and easy to 
   - Updating config or switching providers/models.
   - Resuming work after a failed provider request or cancelled turn.
 
-- [x] **Document platform expectations without duplicating future Windows work.** Add accurate notes for macOS, Linux, and Windows users while keeping deep Windows CLI usability improvements scoped to v0.2.4.
+- [x] **Document platform expectations without duplicating future Windows work.** Add accurate notes for macOS, Linux, and Windows users while keeping deep Windows CLI usability improvements scoped to the planned Windows CLI usability work.
   - Include path, shell, and environment-variable examples for each platform when documentation needs them.
-  - Mark known Windows limitations clearly until the v0.2.4 work lands.
+  - Mark known Windows limitations clearly until the planned Windows CLI usability work lands.
   - Avoid promising installer, package manager, or auto-update behavior that is not implemented.
 
 ### Documentation Quality and Maintenance
@@ -274,3 +180,101 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
 - [x] **Edit diff output.** Make `edit` changes reviewable in the transcript.
   - First version: show a unified before/after diff after the edit is applied.
   - Later versions may add pre-apply approval, but that requires a confirmation flow between tools and the TUI.
+
+## Planned within the next major release
+
+These sections describe work Cassady intends to complete before or as part of the next major release, but which has not yet been assigned to a specific version. Scope, order, and version numbers may change.
+
+### Windows CLI Usability
+
+This work focuses on making Cassady feel reliable and native when the CLI is run on Windows. It covers runtime usability after `cass` or `cassady` is already available on the machine; installers, package managers, PATH setup, code signing, and update delivery are intentionally out of scope.
+
+#### Terminal Experience
+
+- [ ] **Make interactive rendering robust in Windows terminals.** Ensure chat, setup, confirmation prompts, streamed output, spinners, diffs, and tool summaries render cleanly in Windows Terminal, PowerShell, Command Prompt, and common VS Code integrated terminals.
+  - Enable or gracefully detect ANSI/VT support instead of emitting broken escape sequences.
+  - Respect `NO_COLOR`, non-interactive output, redirected stdout/stderr, and narrow terminal widths.
+  - Avoid relying on glyphs, emoji, box drawing, or cursor control sequences that render poorly on default Windows fonts.
+  - Keep wrapping and cursor positioning correct for multi-line input, Markdown output, and long tool-call summaries.
+
+- [ ] **Harden keyboard handling on Windows.** Make the TUI and prompts respond predictably to Windows console input events.
+  - Verify `Enter`, `Backspace`, `Delete`, arrow keys, `Home`, `End`, `PageUp`, `PageDown`, `Tab`, and paste behavior.
+  - Preserve existing `Ctrl-C` cancellation semantics and handle `Ctrl-Break`/console close events gracefully where supported.
+  - Ensure `Esc` cancellation and prompt dismissal work consistently across PowerShell, Command Prompt, and Windows Terminal.
+
+- [ ] **Improve plain CLI output for Windows users.** Commands such as `cass check`, setup diagnostics, validation errors, and usage text should remain readable without a fully interactive terminal.
+  - Prefer actionable Windows examples using PowerShell syntax when the current platform is Windows.
+  - Avoid POSIX-only command snippets in runtime guidance unless explicitly labeled.
+  - Keep error messages copy/paste-friendly and free of terminal control characters when output is redirected.
+
+#### Windows Paths and Files
+
+- [ ] **Support Windows path syntax everywhere the CLI accepts paths.** Normalize and validate paths consistently across arguments, tool calls, diffs, session metadata, and model-visible file references.
+  - Handle drive-letter paths such as `C:\Users\name\project`, rooted paths such as `\temp`, UNC paths such as `\\server\share\repo`, and mixed `/`/`\` separators.
+  - Preserve user-facing paths in a readable Windows form while using canonicalized paths for safety decisions.
+  - Avoid treating `:` in drive letters as URL schemes or command separators.
+  - Add tests for relative path resolution from Windows workspaces and for paths containing spaces, apostrophes, parentheses, brackets, and non-ASCII characters.
+
+- [ ] **Respect Windows filesystem semantics in workspace policy.** Keep read, write, edit, and shell safety checks correct on NTFS and common Windows filesystems.
+  - Account for case-insensitive path comparisons, symlinks, junctions, directory symlinks, and network shares.
+  - Prevent workspace escapes through `..`, junctions, symlink targets, alternate path spellings, and UNC aliases.
+  - Handle reserved device names, trailing dots/spaces, invalid filename characters, and long-path edge cases with clear errors.
+  - Preserve current access modes (`read-only`, `workspace-edit`, `full-access`) with Windows-specific authorization tests.
+
+- [ ] **Handle line endings and encodings cleanly.** Make file reads, edits, diffs, and generated files predictable on Windows projects.
+  - Preserve existing CRLF/LF style when editing files where practical.
+  - Render diffs clearly even when files use CRLF line endings.
+  - Avoid corrupting UTF-8 with BOM, UTF-16, or non-UTF-8 files; detect unsupported text encodings and explain the limitation.
+  - Keep binary-file detection reliable for Windows executables, images, archives, and generated build artifacts.
+
+#### Shell and Process Integration
+
+- [ ] **Use the right shell behavior on Windows.** Make `shell` tool execution, approval prompts, command summaries, cancellation, and exit status reporting work with Windows process semantics.
+  - Prefer PowerShell-friendly examples and diagnostics while still supporting `cmd.exe`-style commands when users provide them.
+  - Quote paths with spaces safely and avoid POSIX-only escaping in Windows-generated commands.
+  - Surface the actual executable, working directory, exit code, stdout, and stderr in a way users can debug.
+  - Cancel long-running child processes cleanly, including process trees where possible.
+
+- [ ] **Normalize environment-variable handling.** Ensure provider API key checks, diagnostics, setup guidance, and spawned tools work with Windows environment conventions.
+  - Treat environment variable names consistently despite Windows case-insensitive lookup behavior.
+  - Show PowerShell examples such as `$env:OPENAI_API_KEY = "..."` for temporary values.
+  - Avoid relying on POSIX shell expansion, `export`, `$VAR`, or `~` in Windows-specific guidance.
+
+- [ ] **Support common Windows external commands and editors.** When Cassady suggests or launches helper commands, make the behavior compatible with typical Windows environments.
+  - Detect missing tools and explain alternatives rather than assuming Unix utilities are present.
+  - Avoid hard dependencies on `sh`, `bash`, `grep`, `sed`, `cat`, `less`, or `/tmp` during normal CLI operation.
+  - Respect configured editor/browser commands and quote file paths correctly when opening files or URLs.
+
+#### Config, State, and Session Usability
+
+- [ ] **Use Windows-appropriate runtime locations.** Keep config, logs, caches, sessions, temporary files, and diagnostics in locations that align with Windows conventions.
+  - Prefer the existing cross-platform directory abstraction where available, and verify behavior with `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `USERPROFILE`.
+  - Expand `~` and environment-derived paths consistently in config values.
+  - Keep session history portable enough to display Windows paths without breaking transcript replay.
+
+- [ ] **Make diagnostics expose Windows-specific context.** Improve `cass check` and error reports so Windows users can understand terminal, filesystem, shell, and config problems quickly.
+  - Include OS, architecture, terminal detection, active shell, config path, workspace path, and access mode when relevant.
+  - Clearly distinguish provider/API-key failures from Windows runtime issues.
+  - Recommend Windows-native remediation steps without mentioning installation tasks.
+
+- [ ] **Keep aliases and command parsing consistent.** Ensure `cass` and `cassady` subcommands, flags, config overrides, and path arguments behave the same on Windows as on Unix-like systems.
+  - Validate quoting behavior for arguments containing spaces and backslashes.
+  - Ensure help text and examples do not imply shell features unavailable in PowerShell or Command Prompt.
+  - Keep machine-readable output stable across platforms when output is consumed by scripts.
+
+#### Verification and Documentation
+
+- [ ] **Add Windows-focused automated coverage.** Add unit and integration tests that exercise Windows path parsing, policy checks, config discovery, line endings, environment variables, and command rendering.
+  - Use platform-gated tests for behavior that can only run on Windows.
+  - Add platform-independent tests for Windows path strings where possible.
+  - Include regression tests for spaces in paths, UNC paths, CRLF edits, and workspace escape attempts.
+
+- [ ] **Run a manual Windows CLI acceptance pass.** Validate the release on a real Windows environment, not just cross-compilation.
+  - Test PowerShell, Command Prompt, Windows Terminal, and VS Code integrated terminal.
+  - Exercise interactive chat, first-run setup, `cass check`, tool approvals, file read/edit/diff, shell cancellation, and redirected output.
+  - Record any unsupported terminal or shell behavior as explicit known limitations.
+
+- [ ] **Update runtime documentation for Windows usage.** Refresh README and bundled docs with Windows-specific CLI usage guidance while avoiding installation instructions.
+  - Document PowerShell environment-variable examples, path examples, terminal expectations, and known limitations.
+  - Include troubleshooting for broken colors, bad wrapping, path authorization failures, CRLF diffs, and missing Unix helper commands.
+  - Keep all Windows guidance consistent with existing access modes and safety policies.
