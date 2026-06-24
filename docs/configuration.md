@@ -6,7 +6,7 @@ Cass reads user-editable config files from `~/.cass`.
 - `providers.json`: provider connection definitions.
 - `models.json`: model metadata.
 
-Cass creates `providers.json` and `models.json` automatically if they are missing. The default provider is Fireworks.
+Cass creates `providers.json` and `models.json` automatically if they are missing. The default provider is Fireworks. On first run, Cass can also launch an interactive setup wizard to choose an OpenAI-compatible provider and first model.
 
 ## `config.json`
 
@@ -29,7 +29,7 @@ Fields:
 
 - `default_provider`: optional provider id from `providers.json`. If omitted, Cass infers the provider from `default_model` when possible.
 - `default_model`: optional model id to use by default.
-- `default_access_mode`: `"read-only"` or `"full-access"`.
+- `default_access_mode`: `"read-only"`, `"workspace-edit"`, or `"full-access"`.
 - `context_message_limit`: optional legacy upper bound for recent non-system messages. Cass primarily budgets context from model metadata (`context_length` and `max_output_tokens`), compacts older tool outputs when needed, and trims only along valid tool-call boundaries.
 - `model_tool_result_limit`: optional max bytes of tool output sent back to the model.
 - `ui_tool_result_limit`: optional max bytes of tool output shown in the UI unless full output is toggled.
@@ -114,6 +114,39 @@ Fields:
 
 Reasoning effort is a runtime per-turn setting. Press `Tab` to cycle it while idle. For models with reasoning metadata, the default effort is `medium` unless overridden by `default_effort`; for models without metadata, reasoning starts `off`.
 
+## Setup wizard
+
+Run:
+
+```sh
+cass setup
+```
+
+Cass also offers setup automatically when `cass` cannot resolve a usable active provider/model/API key before starting a chat.
+
+The wizard uses keyboard prompts: `↑`/`↓` moves through choices, `Space` selects providers in the multi-select screen, and `Enter` submits. Text fields use the same prompt style instead of falling back to plain line input. On an empty install, Cass opens this menu before reading default Fireworks settings, even if `FIREWORKS_API_KEY` is already set.
+
+The wizard supports configuring multiple OpenAI-compatible providers at once:
+
+| Provider | Base URL | Suggested env var |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| xAI | `https://api.x.ai/v1` | `XAI_API_KEY` |
+| Fireworks | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
+| Groq | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
+| OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| OpenCode Zen | `https://opencode.ai/zen/v1` | `OPENCODE_API_KEY` |
+| OpenCode Go | `https://opencode.ai/zen/go/v1` | `OPENCODE_API_KEY` |
+| Cerebras | `https://api.cerebras.ai/v1` | `CEREBRAS_API_KEY` |
+| Novita | `https://api.novita.ai/v3/openai` | `NOVITA_API_KEY` |
+| Together | `https://api.together.xyz/v1` | `TOGETHER_API_KEY` |
+
+There is also a custom OpenAI-compatible option. Custom setup asks for provider name, provider id, base URL, API key environment variable, and first model id. If you configure more than one provider, setup asks which one Cass should use first.
+
+Setup stores API keys as environment-variable references like `"$GROQ_API_KEY"` by default. If the selected environment variable is set, Cass tries to fetch models from `GET {base_url}/models` and lets you choose one. If discovery fails, Cass offers a retry before falling back to manual model entry. If the API key is not set, Cass asks you to enter a model id manually.
+
+After setup, Cass writes/updates `config.json`, `providers.json`, and `models.json`, validates them, and starts a new chat only when the active API key is available in the current shell.
+
 ## Check configuration
 
 Run:
@@ -122,7 +155,7 @@ Run:
 cass check
 ```
 
-This validates JSON syntax, expected schema, duplicate provider/model ids, model/provider references, active provider/model resolution, and API key environment-variable availability. Missing API keys for inactive providers are warnings; a missing active provider API key is an error.
+This validates JSON syntax, expected schema, duplicate provider/model ids, model/provider references, active provider/model resolution, and API key environment-variable availability. Missing API keys for inactive providers are warnings; a missing active provider API key is an error. When setup is incomplete, `cass check` prints actionable next steps such as `export PROVIDER_API_KEY=...`, `cass check`, and `cass`.
 
 ## Ask Cass to edit config
 

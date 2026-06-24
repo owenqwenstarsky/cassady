@@ -1,6 +1,6 @@
 use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
 use crate::cli::{self, Command};
-use crate::config::{Config, ModelDefinition, ReasoningEffort};
+use crate::config::{self, Config, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
 use crate::prompt;
 use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
@@ -20,7 +20,7 @@ const TURN_CANCELLED_MESSAGE: &str = "Turn cancelled by user.";
 const TOOL_CANCELLED_MESSAGE: &str = "Tool execution cancelled by user.";
 
 pub async fn run() -> Result<()> {
-    let cli = cli::parse();
+    let mut cli = cli::parse();
     if matches!(cli.command, Some(Command::Check)) {
         let report = crate::check::run(&cli)?;
         print!("{}", report.render());
@@ -30,12 +30,48 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    let config = Config::load(&cli)?;
+    if matches!(cli.command, Some(Command::Setup)) {
+        let outcome = crate::setup::run(&cli, crate::setup::SetupMode::Explicit).await?;
+        if !outcome.start_session {
+            return Ok(());
+        }
+        cli.command = None;
+    }
+
+    if cli.command.is_none()
+        && cli.resume.is_none()
+        && crate::setup::needs_initial_setup(&config::cass_root())
+    {
+        let outcome = crate::setup::run(&cli, crate::setup::SetupMode::Auto).await?;
+        if !outcome.start_session {
+            return Ok(());
+        }
+    }
+
+    let mut config = match Config::load(&cli) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("Cassady is not ready to start: {err:#}\n");
+            let outcome = crate::setup::run(&cli, crate::setup::SetupMode::Auto).await?;
+            if !outcome.start_session {
+                return Ok(());
+            }
+            Config::load(&cli)?
+        }
+    };
     let cwd = resolve_cwd(cli.cwd.clone())?;
 
     if matches!(cli.resume, Some(None)) {
         list_chats(&config, &cwd)?;
         return Ok(());
+    }
+
+    if config.resolved_api_key().is_err() {
+        let outcome = crate::setup::run(&cli, crate::setup::SetupMode::Auto).await?;
+        if !outcome.start_session {
+            return Ok(());
+        }
+        config = Config::load(&cli)?;
     }
 
     let (conversation, warning) = if let Some(Some(id)) = cli.resume.clone() {

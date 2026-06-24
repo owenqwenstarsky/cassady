@@ -7,9 +7,11 @@ pub mod config;
 pub mod conversation;
 pub mod docs;
 pub mod error;
+pub mod menu;
 pub mod prompt;
 pub mod providers;
 pub mod security;
+pub mod setup;
 pub mod tools;
 pub mod ui;
 

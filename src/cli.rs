@@ -44,6 +44,8 @@ pub struct Cli {
 pub enum Command {
     /// Validate Cass config files.
     Check,
+    /// Configure an OpenAI-compatible provider and first model.
+    Setup,
 }
 
 pub fn parse() -> Cli {

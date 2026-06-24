@@ -1,5 +1,42 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.2 — First-Run Onboarding and Setup Wizard ✅ Completed
+
+This release focuses on making Cassady easy to start using from a fresh install. See `plans/V0_2_2_ONBOARDING_SETUP_WIZARD_PLAN.md`.
+
+### Interactive Setup
+
+- [x] **Add a first-run setup wizard.** When `cass` cannot resolve a usable active provider/model/API key, guide the user through setup instead of starting a chat that will fail.
+  - Trigger automatically on first run or incomplete setup.
+  - Add `cass setup` to run the wizard explicitly.
+  - Keep `cass check` non-interactive.
+
+- [x] **Support OpenAI-compatible provider selection.** Present a reusable keyboard menu with multi-select built-in providers and a custom provider option.
+  - OpenAI: `https://api.openai.com/v1`
+  - xAI: `https://api.x.ai/v1`
+  - Fireworks: `https://api.fireworks.ai/inference/v1`
+  - Groq: `https://api.groq.com/openai/v1`
+  - OpenRouter: `https://openrouter.ai/api/v1`
+  - OpenCode Zen: `https://opencode.ai/zen/v1`
+  - OpenCode Go: `https://opencode.ai/zen/go/v1`
+  - Cerebras: `https://api.cerebras.ai/v1`
+  - Novita: `https://api.novita.ai/v3/openai`
+  - Together: `https://api.together.xyz/v1`
+  - Custom OpenAI-compatible provider.
+  - Do not add Anthropic-native or non-OpenAI-compatible protocols in this release.
+
+- [x] **Guide API key configuration.** Default to environment-variable based API keys, check whether the selected env var is set, and provide exact next steps when it is missing.
+
+- [x] **Guide first-model selection.** Attempt OpenAI-compatible `GET /models` discovery when the API key is available, allow selecting a discovered model, and always provide manual model id entry as a fallback.
+
+- [x] **Write valid config and start the first session.** Upsert provider/model entries, set active defaults, run setup validation, and automatically start a new chat only when the active API key is available.
+
+### Setup Diagnostics and Docs
+
+- [x] **Improve `cass check` onboarding output.** Show active provider, base URL, model, API key env var status, and actionable next steps such as `cass setup` or `export PROVIDER_API_KEY=...`.
+
+- [x] **Refresh onboarding documentation.** Update README and bundled docs for `cass setup`, first-run behavior, OpenAI-compatible provider selection, API key env vars, model discovery/manual fallback, and current access modes including `workspace-edit`.
+
 ## v0.2.1 — Message Rendering Polish ✅ Completed
 
 ### Transcript Rendering

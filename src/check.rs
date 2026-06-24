@@ -38,11 +38,53 @@ impl CheckReport {
                 out.push_str(error);
                 out.push('\n');
             }
+        }
+        let next_steps = self.next_steps();
+        if !next_steps.is_empty() {
+            out.push_str("\nNext step");
+            if next_steps.len() != 1 {
+                out.push('s');
+            }
+            out.push_str(":\n");
+            for step in &next_steps {
+                out.push_str("  ");
+                out.push_str(step);
+                out.push('\n');
+            }
+        }
+        if !self.errors.is_empty() {
             out.push_str("\nConfig check failed.\n");
         } else {
             out.push_str("\nAll checks passed.\n");
         }
         out
+    }
+
+    fn next_steps(&self) -> Vec<String> {
+        if self.errors.is_empty() {
+            return Vec::new();
+        }
+        for error in &self.errors {
+            if let Some(name) = missing_env_var_name(error) {
+                return vec![
+                    format!("export {name}=..."),
+                    "cass check".into(),
+                    "cass".into(),
+                ];
+            }
+        }
+        vec!["cass setup".into()]
+    }
+}
+
+fn missing_env_var_name(error: &str) -> Option<String> {
+    let marker = "environment variable `";
+    let rest = error.split_once(marker)?.1;
+    let name = rest.split_once('`')?.0;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
     }
 }
 
@@ -149,6 +191,10 @@ fn check_active_config(report: &mut CheckReport, cfg: &Config, providers: &Provi
     report
         .successes
         .push(format!("active provider: {}", cfg.provider_id));
+    report.successes.push(format!(
+        "active provider base URL: {}",
+        cfg.active_provider.base_url
+    ));
     report
         .successes
         .push(format!("active model: {}", cfg.model));
