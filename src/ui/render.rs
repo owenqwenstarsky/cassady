@@ -2,6 +2,7 @@ use crate::access::AccessMode;
 use crate::config::ReasoningEffort;
 use crate::ui::autofill::AutoFillMenu;
 use crate::ui::theme;
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::{Paragraph, Wrap};
@@ -164,14 +165,22 @@ fn transcript_lines_from(
             continue;
         }
 
+        if should_hide_collapsed_tool_block(block, show_full_tools) {
+            continue;
+        }
+
         let style = style_for(&block.kind);
-        lines.push(Line::styled(heading_for(block), style));
+        lines.push(Line::styled(display_heading(block, show_full_tools), style));
 
         let content = display_content(block, show_full_tools, show_reasoning);
         if !content.trim().is_empty() {
-            for line in content.lines() {
-                lines.push(Line::raw(format!("  {}", sanitize_line(line))));
-            }
+            let rendered = match block.kind {
+                TranscriptKind::User | TranscriptKind::Assistant => {
+                    render_markdown_content(&content, style)
+                }
+                _ => render_plain_content(&content),
+            };
+            lines.extend(indent_rendered_lines(rendered));
         }
         lines.push(Line::raw(""));
     }
@@ -182,6 +191,239 @@ fn transcript_lines_from(
         ));
     }
     lines
+}
+
+fn render_plain_content(content: &str) -> Vec<Line<'static>> {
+    content
+        .lines()
+        .map(|line| Line::raw(sanitize_line(line)))
+        .collect()
+}
+
+fn render_markdown_content(content: &str, base_style: Style) -> Vec<Line<'static>> {
+    let mut renderer = MarkdownRenderer::new(base_style);
+    for event in Parser::new(content) {
+        renderer.event(event);
+    }
+    renderer.finish()
+}
+
+struct MarkdownRenderer {
+    lines: Vec<Line<'static>>,
+    spans: Vec<Span<'static>>,
+    style_stack: Vec<Style>,
+    base_style: Style,
+    pending_prefix: Option<String>,
+    list_stack: Vec<ListState>,
+    in_code_block: bool,
+    in_heading: bool,
+    in_blockquote: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ListState {
+    next: Option<u64>,
+}
+
+impl MarkdownRenderer {
+    fn new(base_style: Style) -> Self {
+        Self {
+            lines: Vec::new(),
+            spans: Vec::new(),
+            style_stack: vec![base_style],
+            base_style,
+            pending_prefix: None,
+            list_stack: Vec::new(),
+            in_code_block: false,
+            in_heading: false,
+            in_blockquote: false,
+        }
+    }
+
+    fn event(&mut self, event: Event<'_>) {
+        match event {
+            Event::Start(tag) => self.start(tag),
+            Event::End(tag) => self.end(tag),
+            Event::Text(text) => self.push_text(&text),
+            Event::Code(code) => self.push_styled(&code, self.current_style().fg(Color::Yellow)),
+            Event::SoftBreak | Event::HardBreak => self.flush_line(),
+            Event::Rule => {
+                self.flush_line();
+                self.lines.push(Line::styled(
+                    "────────",
+                    self.base_style.fg(Color::DarkGray),
+                ));
+            }
+            Event::Html(html) | Event::InlineHtml(html) => self.push_text(&html),
+            Event::FootnoteReference(reference) => self.push_text(&format!("[{reference}]")),
+            Event::TaskListMarker(checked) => self.push_text(if checked { "[x] " } else { "[ ] " }),
+            _ => {}
+        }
+    }
+
+    fn start(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {}
+            Tag::Heading { level, .. } => {
+                self.flush_line();
+                self.in_heading = true;
+                let marker = match level {
+                    HeadingLevel::H1 => "# ",
+                    HeadingLevel::H2 => "## ",
+                    HeadingLevel::H3 => "### ",
+                    _ => "#### ",
+                };
+                self.pending_prefix = Some(marker.into());
+                self.push_style(self.current_style().add_modifier(Modifier::BOLD));
+            }
+            Tag::BlockQuote(_) => {
+                self.flush_line();
+                self.in_blockquote = true;
+                self.pending_prefix = Some("│ ".into());
+                self.push_style(self.current_style().fg(Color::DarkGray));
+            }
+            Tag::CodeBlock(kind) => {
+                self.flush_line();
+                self.in_code_block = true;
+                let label = match kind {
+                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(format!("```{lang}")),
+                    _ => Some("```".to_string()),
+                };
+                if let Some(label) = label {
+                    self.lines
+                        .push(Line::styled(label, self.base_style.fg(Color::DarkGray)));
+                }
+                self.push_style(self.base_style.fg(Color::Gray));
+            }
+            Tag::List(start) => {
+                self.flush_line();
+                self.list_stack.push(ListState { next: start });
+            }
+            Tag::Item => {
+                self.flush_line();
+                let prefix = if let Some(list) = self.list_stack.last_mut() {
+                    if let Some(n) = list.next {
+                        list.next = Some(n + 1);
+                        format!("{n}. ")
+                    } else {
+                        "• ".to_string()
+                    }
+                } else {
+                    "• ".to_string()
+                };
+                self.pending_prefix = Some(prefix);
+            }
+            Tag::Emphasis => self.push_style(self.current_style().add_modifier(Modifier::ITALIC)),
+            Tag::Strong => self.push_style(self.current_style().add_modifier(Modifier::BOLD)),
+            Tag::Strikethrough => {
+                self.push_style(self.current_style().add_modifier(Modifier::CROSSED_OUT))
+            }
+            Tag::Link { .. } => self.push_style(self.current_style().underlined()),
+            _ => {}
+        }
+    }
+
+    fn end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => self.flush_line(),
+            TagEnd::Heading(_) => {
+                self.flush_line();
+                self.in_heading = false;
+                self.pop_style();
+            }
+            TagEnd::BlockQuote(_) => {
+                self.flush_line();
+                self.in_blockquote = false;
+                self.pop_style();
+            }
+            TagEnd::CodeBlock => {
+                self.flush_line();
+                self.lines
+                    .push(Line::styled("```", self.base_style.fg(Color::DarkGray)));
+                self.in_code_block = false;
+                self.pop_style();
+            }
+            TagEnd::List(_) => {
+                self.flush_line();
+                self.list_stack.pop();
+            }
+            TagEnd::Item => self.flush_line(),
+            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough | TagEnd::Link => {
+                self.pop_style();
+            }
+            _ => self.flush_line(),
+        }
+    }
+
+    fn finish(mut self) -> Vec<Line<'static>> {
+        self.flush_line();
+        if self.lines.is_empty() {
+            render_plain_content("")
+        } else {
+            self.lines
+        }
+    }
+
+    fn push_style(&mut self, style: Style) {
+        self.style_stack.push(style);
+    }
+
+    fn pop_style(&mut self) {
+        if self.style_stack.len() > 1 {
+            self.style_stack.pop();
+        }
+    }
+
+    fn current_style(&self) -> Style {
+        *self.style_stack.last().unwrap_or(&self.base_style)
+    }
+
+    fn push_text(&mut self, text: &str) {
+        self.push_styled(text, self.current_style());
+    }
+
+    fn push_styled(&mut self, text: &str, style: Style) {
+        for (idx, part) in text.split('\n').enumerate() {
+            if idx > 0 {
+                self.flush_line();
+            }
+            if part.is_empty() {
+                continue;
+            }
+            self.ensure_prefix();
+            self.spans.push(Span::styled(sanitize_line(part), style));
+        }
+    }
+
+    fn ensure_prefix(&mut self) {
+        if let Some(prefix) = self.pending_prefix.take() {
+            self.spans.push(Span::styled(prefix, self.current_style()));
+        }
+    }
+
+    fn flush_line(&mut self) {
+        if self.spans.is_empty() {
+            if let Some(prefix) = self.pending_prefix.take() {
+                self.lines.push(Line::styled(prefix, self.current_style()));
+            }
+            return;
+        }
+        self.lines.push(Line::from(std::mem::take(&mut self.spans)));
+        if self.in_blockquote {
+            self.pending_prefix = Some("│ ".into());
+        }
+    }
+}
+
+fn indent_rendered_lines(lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut spans = vec![Span::raw("  ")];
+            spans.extend(line.spans);
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn input_lines(input: &str, busy: bool) -> Vec<Line<'static>> {
@@ -312,6 +554,15 @@ fn style_for(kind: &TranscriptKind) -> Style {
     }
 }
 
+fn display_heading(block: &TranscriptBlock, show_full_tools: bool) -> String {
+    let heading = heading_for(block);
+    if is_collapsed_successful_tool_result(block, show_full_tools) {
+        format!("{heading} · {}", collapsed_tool_summary(&block.content))
+    } else {
+        heading
+    }
+}
+
 fn heading_for(block: &TranscriptBlock) -> String {
     match block.kind {
         TranscriptKind::User => "› you".into(),
@@ -330,13 +581,64 @@ fn heading_for(block: &TranscriptBlock) -> String {
 }
 
 fn display_content(block: &TranscriptBlock, show_full_tools: bool, show_reasoning: bool) -> String {
-    if matches!(block.kind, TranscriptKind::Tool) && !show_full_tools && !is_live_tool_output(block)
-    {
+    if is_collapsed_successful_tool_result(block, show_full_tools) {
         String::new()
+    } else if matches!(block.kind, TranscriptKind::Tool)
+        && !show_full_tools
+        && !is_live_tool_output(block)
+    {
+        collapsed_tool_summary(&block.content)
     } else if matches!(block.kind, TranscriptKind::Reasoning) && !show_reasoning {
         String::new()
     } else {
         block.content.clone()
+    }
+}
+
+fn should_hide_collapsed_tool_block(block: &TranscriptBlock, show_full_tools: bool) -> bool {
+    !show_full_tools
+        && matches!(block.kind, TranscriptKind::Tool)
+        && !is_live_tool_output(block)
+        && block.title.starts_with("ls ✓")
+}
+
+fn is_collapsed_successful_tool_result(block: &TranscriptBlock, show_full_tools: bool) -> bool {
+    !show_full_tools
+        && matches!(block.kind, TranscriptKind::Tool)
+        && !is_live_tool_output(block)
+        && block.title.contains('✓')
+}
+
+fn collapsed_tool_summary(content: &str) -> String {
+    if content.is_empty() {
+        return "no output".into();
+    }
+    let lines = content.lines().count();
+    format!(
+        "{} · {} · tool output hidden",
+        pluralize(lines, "line"),
+        human_bytes(content.len())
+    )
+}
+
+fn pluralize(count: usize, unit: &str) -> String {
+    if count == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{count} {unit}s")
+    }
+}
+
+fn human_bytes(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes_f < MB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{:.1} MB", bytes_f / MB)
     }
 }
 
@@ -472,6 +774,136 @@ fn input_height(input: &str, available_width: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rendered_text(lines: &[Line<'static>]) -> String {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn assistant_markdown_renders_common_blocks() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Assistant,
+            title: "response".into(),
+            content: "## Plan\n\n- Read files\n- Apply `edits`\n\n```rust\nlet ok = true;\n```"
+                .into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+
+        assert!(text.contains("## Plan"));
+        assert!(text.contains("• Read files"));
+        assert!(text.contains("Apply edits"));
+        assert!(text.contains("```rust"));
+        assert!(text.contains("let ok = true;"));
+    }
+
+    #[test]
+    fn user_markdown_is_rendered() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::User,
+            title: "message".into(),
+            content: "Please do **this**:\n1. Test".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+
+        assert!(text.contains("Please do this:"));
+        assert!(text.contains("1. Test"));
+    }
+
+    #[test]
+    fn collapsed_tool_output_shows_one_line_summary() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "read ✓ (call_1)".into(),
+            content: "one\ntwo\nthree".into(),
+        }];
+
+        let rendered = transcript_lines_from(&transcript, false, false);
+        let text = rendered_text(&rendered);
+
+        assert_eq!(rendered.len(), 2); // heading plus spacer
+        assert!(text.contains("read ✓ (call_1) · 3 lines"));
+        assert!(!text.contains("one\ntwo\nthree"));
+    }
+
+    #[test]
+    fn successful_ls_is_hidden_when_tools_are_collapsed() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "ls ✓ (call_1)".into(),
+            content: "file1\nfile2".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+
+        assert!(!text.contains("ls ✓"));
+        assert!(text.contains("Ask a question"));
+    }
+
+    #[test]
+    fn successful_ls_is_visible_when_tools_are_expanded() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "ls ✓ (call_1)".into(),
+            content: "file1\nfile2".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, true, false));
+
+        assert!(text.contains("ls ✓ (call_1)"));
+        assert!(text.contains("file1"));
+    }
+
+    #[test]
+    fn failed_tool_output_stays_visible_when_collapsed() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Error,
+            title: "ls ✗ (call_1)".into(),
+            content: "permission denied".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+
+        assert!(text.contains("ls ✗ (call_1)"));
+        assert!(text.contains("permission denied"));
+    }
+
+    #[test]
+    fn expanded_tool_output_shows_full_content() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "read ✓ (call_1)".into(),
+            content: "one\ntwo".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, true, false));
+
+        assert!(text.contains("one\n  two"));
+    }
+
+    #[test]
+    fn live_tool_output_stays_visible_when_collapsed() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "shell … (call_1)".into(),
+            content: "streamed output:\nhello".into(),
+        }];
+
+        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+
+        assert!(text.contains("streamed output"));
+        assert!(text.contains("hello"));
+    }
 
     #[test]
     fn max_scroll_counts_wrapped_transcript_rows() {

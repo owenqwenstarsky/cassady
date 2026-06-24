@@ -1,5 +1,14 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.1 — Message Rendering Polish
+
+### Transcript Rendering
+
+- [x] **Markdown message rendering and cleaner tool-call display.** Render assistant and user message blocks as Markdown, and improve tool call rendering/display so tool invocations and results are easier to scan in the transcript.
+  - Completed tool invocation/processing blocks are removed once the result arrives.
+  - Collapsed successful tool results render as a one-line summary.
+  - Successful `ls` results are hidden in collapsed mode to avoid transcript clutter; full tool view still shows them.
+
 ## v0.2.0 — Control, Context, and Observability ✅ Completed
 
 This release focuses on making Cass easier to interrupt, easier to audit, and safer to run on real projects. Large provider expansions and broad protocol integrations are intentionally deferred.

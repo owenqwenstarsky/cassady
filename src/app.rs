@@ -9,7 +9,7 @@ use crate::ui::render::{self, TranscriptBlock, TranscriptKind};
 use crate::ui::terminal;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -909,8 +909,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             ctx.transcript.push(TranscriptBlock {
                 kind: TranscriptKind::Tool,
                 title: format!("{name} … ({})", short_call_id(&id)),
-                content: serde_json::to_string_pretty(&arguments)
-                    .unwrap_or_else(|_| arguments.to_string()),
+                content: summarize_tool_arguments(&name, &arguments),
             });
             ctx.active_tools.insert(id, ctx.transcript.len() - 1);
             update_bottom_scroll(ctx)?;
@@ -950,7 +949,9 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
                     return Ok(());
                 }
             }
-            ctx.active_tools.remove(&id);
+            if let Some(idx) = ctx.active_tools.remove(&id) {
+                remove_transcript_block(ctx, idx);
+            }
             ctx.transcript.push(TranscriptBlock {
                 kind: if ok {
                     TranscriptKind::Tool
@@ -975,8 +976,7 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
         } => {
             *ctx.active_assistant = None;
             *ctx.active_reasoning = None;
-            let args =
-                serde_json::to_string_pretty(&arguments).unwrap_or_else(|_| arguments.to_string());
+            let args = summarize_tool_arguments(&name, &arguments);
             let block_index = ctx.transcript.len();
             *ctx.pending_approval = Some(PendingApproval {
                 request_id: request_id.clone(),
@@ -1065,16 +1065,47 @@ fn hide_pending_approval(
     transcript.remove(idx);
     adjust_index_after_remove(active_assistant, idx);
     adjust_index_after_remove(active_reasoning, idx);
+    adjust_active_tool_indices_after_remove(active_tools, idx);
+}
+
+fn remove_transcript_block(ctx: &mut AgentEventContext<'_>, idx: usize) {
+    if idx >= ctx.transcript.len() {
+        return;
+    }
+    ctx.transcript.remove(idx);
+    adjust_index_after_remove(ctx.active_assistant, idx);
+    adjust_index_after_remove(ctx.active_reasoning, idx);
+    adjust_pending_approval_after_remove(ctx.pending_approval, idx);
+    adjust_active_tool_indices_after_remove(ctx.active_tools, idx);
+}
+
+fn adjust_active_tool_indices_after_remove(
+    active_tools: &mut HashMap<String, usize>,
+    removed: usize,
+) {
     active_tools.retain(|_, tool_idx| {
-        if *tool_idx == idx {
+        if *tool_idx == removed {
             false
         } else {
-            if *tool_idx > idx {
+            if *tool_idx > removed {
                 *tool_idx -= 1;
             }
             true
         }
     });
+}
+
+fn adjust_pending_approval_after_remove(
+    pending_approval: &mut Option<PendingApproval>,
+    removed: usize,
+) {
+    if let Some(pending) = pending_approval {
+        if pending.block_index == removed {
+            *pending_approval = None;
+        } else if pending.block_index > removed {
+            pending.block_index -= 1;
+        }
+    }
 }
 
 fn adjust_index_after_remove(index: &mut Option<usize>, removed: usize) {
@@ -1507,6 +1538,119 @@ fn transcript_from_loaded(
     blocks
 }
 
+fn summarize_tool_arguments(name: &str, args: &serde_json::Value) -> String {
+    match name {
+        "read" => summarize_read_args(args),
+        "write" => summarize_write_args(args),
+        "edit" => summarize_edit_args(args),
+        "shell" => summarize_shell_args(args),
+        "grep" => summarize_grep_args(args),
+        "ls" => summarize_ls_args(args),
+        _ => pretty_json(args),
+    }
+}
+
+fn summarize_read_args(args: &serde_json::Value) -> String {
+    let Some(files) = args.get("files").and_then(|value| value.as_array()) else {
+        return pretty_json(args);
+    };
+    if files.len() == 1 {
+        let Some(file) = files.first() else {
+            return pretty_json(args);
+        };
+        let Some(path) = file.get("path").and_then(|value| value.as_str()) else {
+            return pretty_json(args);
+        };
+        let mut lines = vec![format!("file: {path}")];
+        if let Some(range) = file.get("lines").and_then(|value| value.as_str()) {
+            lines.push(format!("lines: {}", range.replace('-', "–")));
+        }
+        return lines.join("\n");
+    }
+    let mut lines = vec![format!("files: {}", files.len())];
+    for file in files.iter().take(4) {
+        if let Some(path) = file.get("path").and_then(|value| value.as_str()) {
+            lines.push(format!("- {path}"));
+        }
+    }
+    if files.len() > 4 {
+        lines.push(format!("… {} more", files.len() - 4));
+    }
+    lines.join("\n")
+}
+
+fn summarize_write_args(args: &serde_json::Value) -> String {
+    let Some(path) = args.get("path").and_then(|value| value.as_str()) else {
+        return pretty_json(args);
+    };
+    let mut lines = vec![format!("file: {path}")];
+    if let Some(content) = args.get("content").and_then(|value| value.as_str()) {
+        lines.push(format!("bytes: {}", human_bytes(content.len())));
+    }
+    lines.join("\n")
+}
+
+fn summarize_edit_args(args: &serde_json::Value) -> String {
+    let Some(path) = args.get("path").and_then(|value| value.as_str()) else {
+        return pretty_json(args);
+    };
+    let Some(edits) = args.get("edits").and_then(|value| value.as_array()) else {
+        return pretty_json(args);
+    };
+    format!("file: {path}\nedits: {}", edits.len())
+}
+
+fn summarize_shell_args(args: &serde_json::Value) -> String {
+    let Some(command) = args.get("command").and_then(|value| value.as_str()) else {
+        return pretty_json(args);
+    };
+    format!("command: {command}")
+}
+
+fn summarize_grep_args(args: &serde_json::Value) -> String {
+    let Some(query) = args.get("query").and_then(|value| value.as_str()) else {
+        return pretty_json(args);
+    };
+    let mut lines = vec![format!("query: {query}")];
+    if let Some(paths) = args.get("paths").and_then(|value| value.as_array()) {
+        if paths.len() == 1 {
+            if let Some(path) = paths.first().and_then(|value| value.as_str()) {
+                lines.push(format!("path: {path}"));
+            }
+        } else if !paths.is_empty() {
+            lines.push(format!("paths: {}", paths.len()));
+        }
+    }
+    if args.get("regex").and_then(|value| value.as_bool()) == Some(true) {
+        lines.push("regex: true".into());
+    }
+    lines.join("\n")
+}
+
+fn summarize_ls_args(args: &serde_json::Value) -> String {
+    let Some(path) = args.get("path").and_then(|value| value.as_str()) else {
+        return pretty_json(args);
+    };
+    format!("path: {path}")
+}
+
+fn pretty_json(value: &serde_json::Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn human_bytes(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    let bytes_f = bytes as f64;
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes_f < MB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{:.1} MB", bytes_f / MB)
+    }
+}
+
 fn short_call_id(id: &str) -> String {
     if id.len() <= 12 {
         id.to_string()
@@ -1554,6 +1698,14 @@ fn clamp_scroll(
 }
 
 fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock> {
+    let completed_tool_calls: HashSet<&str> = conversation
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            conversation::Record::Tool { tool_call_id, .. } => Some(tool_call_id.as_str()),
+            _ => None,
+        })
+        .collect();
     let mut blocks = Vec::new();
     for r in &conversation.records {
         match r {
@@ -1583,11 +1735,13 @@ fn blocks_from_conversation(conversation: &Conversation) -> Vec<TranscriptBlock>
                     });
                 }
                 for call in tool_calls {
+                    if completed_tool_calls.contains(call.id.as_str()) {
+                        continue;
+                    }
                     blocks.push(TranscriptBlock {
                         kind: TranscriptKind::Tool,
                         title: format!("{} … ({})", call.name, short_call_id(&call.id)),
-                        content: serde_json::to_string_pretty(&call.arguments)
-                            .unwrap_or_else(|_| call.arguments.to_string()),
+                        content: summarize_tool_arguments(&call.name, &call.arguments),
                     });
                 }
             }
@@ -1630,6 +1784,123 @@ mod tests {
             ..Config::default()
         };
         (root, config)
+    }
+
+    #[test]
+    fn summarize_edit_args_uses_edits() {
+        let summary = summarize_tool_arguments(
+            "edit",
+            &serde_json::json!({"path":"src/ui/render.rs","edits":[{"old_text":"a","new_text":"b"},{"old_text":"c","new_text":"d"}]}),
+        );
+
+        assert_eq!(summary, "file: src/ui/render.rs\nedits: 2");
+        assert!(!summary.contains("replacements"));
+    }
+
+    #[test]
+    fn summarize_shell_args_uses_command() {
+        let summary =
+            summarize_tool_arguments("shell", &serde_json::json!({"command":"cargo test"}));
+
+        assert_eq!(summary, "command: cargo test");
+    }
+
+    #[test]
+    fn summarize_read_args_uses_file_and_lines() {
+        let summary = summarize_tool_arguments(
+            "read",
+            &serde_json::json!({"files":[{"path":"src/app.rs","lines":"1-20"}]}),
+        );
+
+        assert_eq!(summary, "file: src/app.rs\nlines: 1–20");
+    }
+
+    #[test]
+    fn summarize_unknown_tool_falls_back_to_json() {
+        let summary = summarize_tool_arguments("custom", &serde_json::json!({"alpha":1}));
+
+        assert!(summary.contains("\"alpha\": 1"));
+    }
+
+    #[test]
+    fn loaded_transcript_hides_completed_tool_call_invocations() {
+        let root = tempdir().unwrap();
+        let cwd = tempdir().unwrap();
+        let config = Config {
+            root: root.path().to_path_buf(),
+            model: "test-model".into(),
+            ..Config::default()
+        };
+        let mut conversation = Conversation::create(
+            &config.conversations_dir(),
+            &config.model,
+            cwd.path(),
+            "base prompt".into(),
+        )
+        .unwrap();
+        conversation
+            .append(Record::Assistant {
+                content: String::new(),
+                reasoning: String::new(),
+                reasoning_field: None,
+                tool_calls: vec![conversation::StoredToolCall {
+                    id: "call_done".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"files":[{"path":"src/app.rs"}]}),
+                }],
+                ts: conversation::now_ts(),
+            })
+            .unwrap();
+        conversation
+            .append(Record::Tool {
+                tool_call_id: "call_done".into(),
+                name: "read".into(),
+                ok: true,
+                content: "ok".into(),
+                ts: conversation::now_ts(),
+            })
+            .unwrap();
+
+        let blocks = blocks_from_conversation(&conversation);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].title, "read ✓ (call_done)");
+    }
+
+    #[test]
+    fn loaded_transcript_keeps_pending_tool_call_invocations() {
+        let root = tempdir().unwrap();
+        let cwd = tempdir().unwrap();
+        let config = Config {
+            root: root.path().to_path_buf(),
+            model: "test-model".into(),
+            ..Config::default()
+        };
+        let mut conversation = Conversation::create(
+            &config.conversations_dir(),
+            &config.model,
+            cwd.path(),
+            "base prompt".into(),
+        )
+        .unwrap();
+        conversation
+            .append(Record::Assistant {
+                content: String::new(),
+                reasoning: String::new(),
+                reasoning_field: None,
+                tool_calls: vec![conversation::StoredToolCall {
+                    id: "call_pending".into(),
+                    name: "shell".into(),
+                    arguments: serde_json::json!({"command":"sleep 60"}),
+                }],
+                ts: conversation::now_ts(),
+            })
+            .unwrap();
+
+        let blocks = blocks_from_conversation(&conversation);
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].title, "shell … (call_pending)");
     }
 
     #[test]
