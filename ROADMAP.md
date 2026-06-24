@@ -1,6 +1,6 @@
 # Cassady (Cass) Roadmap
 
-## v0.2.1 — Message Rendering Polish
+## v0.2.1 — Message Rendering Polish ✅ Completed
 
 ### Transcript Rendering
 
