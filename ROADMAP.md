@@ -20,7 +20,7 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
   - Preserve valid tool-call structure when compacting context; do not leave orphaned tool result messages.
   - Compact or summarize older tool outputs when needed instead of dropping records blindly.
 
-- [ ] **Supersede old file-read outputs.** When the same file is read again in a session, avoid repeatedly sending stale large read outputs to the model.
+- [x] **Supersede old file-read outputs.** When the same file is read again in a session, avoid repeatedly sending stale large read outputs to the model.
   - Keep the historical tool call visible in the conversation record.
   - Replace superseded model-context output with a short note indicating it was omitted because a newer read exists.
   - Be careful with partial reads: a later read of the same file does not always supersede a different line range.
