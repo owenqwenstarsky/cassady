@@ -1,6 +1,16 @@
 name: CI
 
-on: push
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'docs/**'
+      - 'plans/**'
+      - '*.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
 
 permissions:
   contents: read
