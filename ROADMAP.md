@@ -96,22 +96,22 @@ This release focuses on making Cassady feel reliable and native when the CLI is 
 
 ## v0.2.3 — Documentation and README Refresh
 
-This release focuses on making Cassady understandable, trustworthy, and easy to operate by rewriting the README and bringing all bundled documentation up to date with the current CLI behavior. The work should cover user-facing documentation only; broad CLI feature work and Windows-specific runtime improvements are deferred to v0.2.4.
+This release focuses on making Cassady understandable, trustworthy, and easy to operate by rewriting the README and bringing all bundled documentation up to date with the current CLI behavior. The work should cover user-facing documentation only; broad CLI feature work and Windows-specific runtime improvements are deferred to v0.2.4. See `plans/V0_2_3_DOCUMENTATION_README_REFRESH_PLAN.md`.
 
 ### README Rewrite
 
-- [ ] **Rewrite the README around the current Cassady experience.** Replace stale or incomplete sections with a clear, accurate guide to what Cassady is, who it is for, and how to start using it.
+- [x] **Rewrite the README around the current Cassady experience.** Replace stale or incomplete sections with a clear, accurate guide to what Cassady is, who it is for, and how to start using it.
   - Add a concise product summary, core capabilities, supported workflows, and current limitations.
   - Document both `cass` and `cassady` command names where relevant.
   - Keep examples aligned with the current setup wizard, active provider/model configuration, access modes, tools, and TUI behavior.
   - Remove outdated MVP language, obsolete commands, and instructions that no longer match the code.
 
-- [ ] **Add a complete first-use walkthrough.** Make the README guide a new user from launching the CLI to a successful first chat without requiring them to infer missing steps.
+- [x] **Add a complete first-use walkthrough.** Make the README guide a new user from launching the CLI to a successful first chat without requiring them to infer missing steps.
   - Cover first-run setup, `cass setup`, `cass check`, provider selection, API key environment variables, model discovery, and manual model entry fallback.
   - Include copy/paste-ready examples for common providers without exposing secrets or implying one provider is required.
   - Explain what happens when setup is incomplete and how the user should recover.
 
-- [ ] **Document everyday workflows.** Add practical examples for the CLI actions users are most likely to perform after setup.
+- [x] **Document everyday workflows.** Add practical examples for the CLI actions users are most likely to perform after setup.
   - Starting a chat in a project workspace.
   - Asking Cassady to inspect files, explain code, propose edits, and apply edits.
   - Reviewing tool calls, collapsed tool output, edit diffs, and assistant Markdown rendering.
@@ -119,23 +119,23 @@ This release focuses on making Cassady understandable, trustworthy, and easy to 
 
 ### Reference Documentation
 
-- [ ] **Create or refresh the CLI command reference.** Document all supported commands, flags, aliases, and expected output modes in one place.
+- [x] **Create or refresh the CLI command reference.** Document all supported commands, flags, aliases, and expected output modes in one place.
   - Include `cass`, `cassady`, `setup`, `check`, chat startup behavior, config overrides, access-mode flags, and any non-interactive/script-friendly commands.
   - Show when commands are interactive versus non-interactive.
   - Keep examples shell-neutral where possible, and label platform-specific syntax when needed.
 
-- [ ] **Rewrite the configuration reference.** Explain where config lives, how active provider/model selection works, and how users should safely edit or validate config.
+- [x] **Rewrite the configuration reference.** Explain where config lives, how active provider/model selection works, and how users should safely edit or validate config.
   - Document provider entries, model entries, active defaults, API key environment variable names, custom OpenAI-compatible providers, and model IDs.
   - Explain precedence between config files, environment variables, command-line overrides, and setup wizard changes.
   - Include valid example config snippets and common invalid configurations with fixes.
 
-- [ ] **Document providers and model setup thoroughly.** Add a dedicated guide for built-in OpenAI-compatible providers and custom provider setup.
+- [x] **Document providers and model setup thoroughly.** Add a dedicated guide for built-in OpenAI-compatible providers and custom provider setup.
   - List supported built-in providers, base URLs, expected API key env vars, and any known model-discovery limitations.
   - Explain the difference between provider configuration, model selection, and API key availability.
   - Document manual model entry, provider health checks, and how `cass check` reports provider problems.
   - Explicitly note protocols or providers that are not supported yet to avoid user confusion.
 
-- [ ] **Document access modes and tool safety.** Make the security model understandable before users let Cassady inspect or edit a repository.
+- [x] **Document access modes and tool safety.** Make the security model understandable before users let Cassady inspect or edit a repository.
   - Explain `read-only`, `workspace-edit`, and `full-access` in user-facing terms.
   - Document what read, write, edit, shell, and bundled-doc access mean in each mode.
   - Explain shell approval prompts, optional destructive-operation confirmation, workspace boundaries, symlink handling, and edit diff review.
@@ -143,43 +143,43 @@ This release focuses on making Cassady understandable, trustworthy, and easy to 
 
 ### Usage Guides and Troubleshooting
 
-- [ ] **Add troubleshooting for common failure modes.** Give users actionable fixes for the errors they are most likely to hit.
+- [x] **Add troubleshooting for common failure modes.** Give users actionable fixes for the errors they are most likely to hit.
   - Missing API keys, invalid env vars, unreachable provider URLs, model discovery failures, unsupported model IDs, and rate/authentication errors.
   - Broken or incomplete config, unreadable config paths, invalid TOML/JSON if applicable, and permission problems.
   - Terminal rendering issues, non-interactive terminals, redirected output, shell command failures, and cancellation behavior.
   - File edit failures, failed exact-text replacements, binary/large files, line ending issues, and workspace access denials.
 
-- [ ] **Add task-oriented examples.** Include short, realistic examples that demonstrate how Cassady should be used on real projects.
+- [x] **Add task-oriented examples.** Include short, realistic examples that demonstrate how Cassady should be used on real projects.
   - Code explanation and navigation.
   - Safe file editing with diff review.
   - Running tests or build commands with shell approval.
   - Updating config or switching providers/models.
   - Resuming work after a failed provider request or cancelled turn.
 
-- [ ] **Document platform expectations without duplicating future Windows work.** Add accurate notes for macOS, Linux, and Windows users while keeping deep Windows CLI usability improvements scoped to v0.2.4.
+- [x] **Document platform expectations without duplicating future Windows work.** Add accurate notes for macOS, Linux, and Windows users while keeping deep Windows CLI usability improvements scoped to v0.2.4.
   - Include path, shell, and environment-variable examples for each platform when documentation needs them.
   - Mark known Windows limitations clearly until the v0.2.4 work lands.
   - Avoid promising installer, package manager, or auto-update behavior that is not implemented.
 
 ### Documentation Quality and Maintenance
 
-- [ ] **Improve prose quality and readability.** Rewrite docs in clear sentences and paragraphs instead of relying on long, list-heavy outlines.
+- [x] **Improve prose quality and readability.** Rewrite docs in clear sentences and paragraphs instead of relying on long, list-heavy outlines.
   - Use bullets and tables only when they improve scanning, such as setup steps, command references, provider lists, or troubleshooting checklists.
   - Prefer short explanatory paragraphs for concepts, workflows, tradeoffs, and safety guidance.
   - Avoid turning every section into nested bullets; the README should feel like polished documentation, not an implementation checklist.
 
-- [ ] **Synchronize README, bundled docs, and CLI help text.** Ensure every user-facing description of commands, modes, providers, setup, and tools says the same thing.
+- [x] **Synchronize README, bundled docs, and CLI help text.** Ensure every user-facing description of commands, modes, providers, setup, and tools says the same thing.
   - Audit README, docs, inline help, setup prompts, `cass check` guidance, and release notes templates for contradictions.
   - Update terminology consistently: Cassady/Cass, provider, model, workspace, access mode, tool call, tool result, and session.
   - Make sure future docs can be updated from one source of truth where practical.
 
-- [ ] **Improve documentation structure and navigation.** Make the docs easy to scan and hard to misuse.
+- [x] **Improve documentation structure and navigation.** Make the docs easy to scan and hard to misuse.
   - Add a table of contents or clear section links where the document is long.
   - Move long reference material out of the README when it distracts from first-use guidance, and link to it clearly.
   - Add a glossary for recurring concepts such as workspace, provider, model, access mode, context, and tool call.
   - Ensure headings, examples, and filenames follow a consistent style.
 
-- [ ] **Verify documentation against the actual CLI.** Treat docs as tested user experience, not prose written from memory.
+- [x] **Verify documentation against the actual CLI.** Treat docs as tested user experience, not prose written from memory.
   - Run the documented commands and update examples to match real output.
   - Check every internal link, file path, command name, provider URL, env var, and config snippet.
   - Add lightweight docs checks where practical, such as link validation or command-output smoke tests.

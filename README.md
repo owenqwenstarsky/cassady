@@ -1,8 +1,18 @@
 # Cassady / Cass
 
-Cassady (`cass`) is a minimal Rust terminal coding agent with a looped chat UI, filesystem tools, access modes, JSONL conversation persistence, and OpenAI-compatible LLM support. The default endpoint is Fireworks.
+Cassady (`cass`) is a terminal coding agent written in Rust. It runs an interactive chat in your project, can inspect files, apply exact edits, run shell commands when the active safety mode allows them, and persist sessions for later resume. Cassady currently talks to OpenAI-compatible providers.
 
-## Install
+The project installs two equivalent commands, `cass` and `cassady`; examples use `cass`.
+
+## Current scope and limitations
+
+- Provider support is OpenAI-compatible chat/completions APIs only.
+- The primary interface is an interactive terminal UI.
+- Config and conversation state live under `~/.cass`.
+- Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
+- Cassady is not an installer, updater, or package manager.
+
+## Install from source
 
 ```sh
 cargo install --path .
@@ -11,109 +21,104 @@ cargo install --path .
 This installs both commands:
 
 ```sh
-cass
-cassady
+cass --version
+cassady --version
 ```
 
-## Configure
+## First use
 
-On first run, Cass starts an interactive setup wizard if it cannot find a usable provider/model/API key:
+Start Cassady in a project directory:
 
 ```sh
 cass
 ```
 
-You can also run the wizard explicitly:
+If Cassady cannot resolve a usable provider, model, or API key, it offers to run setup before opening a chat. You can also run setup explicitly:
 
 ```sh
 cass setup
-```
-
-The wizard uses clean keyboard prompts: `↑`/`↓` moves, `Space` selects providers, and `Enter` submits. It supports configuring multiple OpenAI-compatible providers at once: OpenAI, xAI, Fireworks, Groq, OpenRouter, OpenCode Zen, OpenCode Go, Cerebras, Novita, Together, and custom OpenAI-compatible endpoints. It asks for API key environment variables, tries to fetch models from `GET /models`, lets you retry model discovery or enter a model id manually if discovery fails, saves config, validates setup, and starts a new session when ready.
-
-By default, Cass still ships with Fireworks defaults:
-
-- base URL: `https://api.fireworks.ai/inference/v1`
-- model: `accounts/fireworks/models/qwen3p7-plus`
-- API key: `"$FIREWORKS_API_KEY"`
-
-Set your selected provider key, for example:
-
-```sh
-export FIREWORKS_API_KEY=...
-```
-
-User preferences live at `~/.cass/config.json`:
-
-```json
-{
-  "default_model": "accounts/fireworks/models/qwen3p7-plus",
-  "default_access_mode": "read-only",
-  "show_reasoning": false
-}
-```
-
-Provider connection details belong in `~/.cass/providers.json`. Model metadata belongs in `~/.cass/models.json`. API keys may be literal strings or environment-variable references like `"$FIREWORKS_API_KEY"`.
-
-Validate config with:
-
-```sh
 cass check
+cass
 ```
 
-Extra global instructions can be placed in `~/.cass/global.md`.
+The setup wizard lets you choose one or more OpenAI-compatible providers, enter the API key environment-variable name, discover models from `GET /models` when the key is available, or enter a model id manually.
 
-Bundled documentation from this build is embedded into the binary and installed to `~/.cass/docs` on startup. See `~/.cass/docs/configuration.md` for full configuration docs.
-
-## Usage
+Set your provider key in the shell where you run Cassady. For example, on macOS/Linux:
 
 ```sh
-cass [--model MODEL] [--base-url URL] [--api-key-env ENV] [--cwd PATH]
+export OPENAI_API_KEY=...
+```
+
+In PowerShell:
+
+```powershell
+$env:OPENAI_API_KEY = "..."
+```
+
+Run `cass check` any time to validate JSON config, provider/model references, active model resolution, and API key availability.
+
+## Everyday usage
+
+```sh
+cass [--model MODEL] [--cwd PATH]
 cass --resume <chat-id>
 cass --resume
 cass check
 cass setup
 ```
 
-`cass --resume` without an ID lists chats for the current directory.
+`cass --resume` without an id lists saved chats for the current directory. When Cassady exits a chat, it prints a resume command for that session.
 
-## Keys
+Common in-chat commands:
 
-- Type `/`: show command autocomplete, including command arguments like `/model <model>` and `/new`
-- `Up`/`Down`: move through an autocomplete menu
-- `Enter`: fill autocomplete selection when a menu is open; otherwise send message / run command
-- `Tab`: cycle reasoning effort (`off` → `low` → `medium` → `high`; required-reasoning models skip `off`)
-- `Ctrl-J`: insert newline
-- `Shift-Tab`: cycle access mode while idle (`read-only` → `workspace-edit` → `full-access`)
-- `Ctrl-O`: toggle compact/full tool output display
-- `Ctrl-Shift-R`: toggle reasoning display
-- `Up`/`Down` or mouse wheel: scroll transcript when no autocomplete menu is open
-- `PageUp`/`PageDown`: transcript scroll
-- `Ctrl-C` twice within 1.5 seconds: exit
+- `/model <model>`: switch to a model from `~/.cass/models.json`.
+- `/new`: create a new chat for the current directory.
+- `/resume <chat>`: resume a saved chat for the current directory.
+- `/status`: show chat id, model, mode, cwd, record count, and current status.
 
-## Commands
+Helpful keys:
 
-- `cass check`: validate Cass config files
-- `cass setup`: choose an OpenAI-compatible provider/model and save config
-- `/model <model>`: switch the model for future turns; model autocomplete lists entries from `~/.cass/models.json`
-- `/new`: create a new chat for the current directory
-- `/resume <chat>`: resume a saved chat; chat autocomplete lists chats for the current directory
-- `/status`: show current chat status
+- `/`: show command autocomplete.
+- `Enter`: send the message or accept an autocomplete item.
+- `Ctrl-J` or `Ctrl-Enter`: insert a newline.
+- `Shift-Tab`: cycle access mode while idle.
+- `Tab`: cycle reasoning effort while idle.
+- `Ctrl-O`: toggle compact/full tool output display.
+- `Ctrl-Shift-R` or `Ctrl-R`: toggle reasoning display.
+- `Esc`: request turn cancellation while a turn is running.
+- `Ctrl-C` twice within 1.5 seconds: exit.
 
-On exit Cass prints:
+## Safety model
 
-```text
-Resume this chat with: cass --resume <id>
-```
+Cassady exposes tools according to the active access mode:
 
-## Tools
+- `read-only`: read/list/search the workspace and bundled docs. No edits or shell commands.
+- `workspace-edit`: read/list/search plus write/edit inside the launch workspace. Shell commands require explicit approval.
+- `full-access`: read/write/edit broadly under your OS permissions and run shell commands without the workspace-edit approval prompt. Bundled docs remain read-only.
 
-Tool calls are shown compactly by default; press `Ctrl-O` to expand full tool output.
+Use `--readonly`, `--workspace-edit`, or `--full-access` to choose a mode at launch, or press `Shift-Tab` while idle.
 
-Reasoning is hidden by default unless `show_reasoning` is enabled; press `Ctrl-Shift-R` to toggle it. Press `Tab` to choose the reasoning effort for future turns. Model metadata controls whether reasoning is supported or required and how the effort is sent to the provider. When providers stream reasoning fields, Cass persists that reasoning and sends it back in future model context using the provider's reasoning field, such as `reasoning_content` or `reasoning`.
+## Configuration and docs
 
-Read-only mode allows `ls`, `read`, and `grep` within the launch cwd/`--cwd` and the bundled docs directory at `~/.cass/docs`.
+Cassady stores user-editable files in `~/.cass`:
 
-Workspace-edit mode allows `ls`, `read`, `grep`, `write`, and `edit` inside the launch workspace. Bundled Cass docs remain read-only. Shell commands are available but require explicit approval before execution.
+- `config.json`: active defaults and preferences.
+- `providers.json`: provider base URLs and API key references.
+- `models.json`: model metadata.
+- `global.md`: optional global instructions added to new chats.
+- `docs/`: bundled documentation installed from the current binary.
 
-Full-access mode additionally allows broader filesystem access under the user's OS permissions. Mutating tools use atomic writes where practical: Cass writes to a temporary file first, then renames it into place after validation/write success. `write` and `edit` are always blocked under `~/.cass/docs`. The `shell` tool runs commands via `sh -c` in the launch working directory with a configurable timeout (default 30 seconds) and streams stdout/stderr into the transcript while the command is running.
+API key references should usually be written as environment variables such as `"$OPENAI_API_KEY"`.
+
+Detailed bundled docs live in this repository under [`docs/`](docs/README.md) and are installed to `~/.cass/docs` at runtime.
+
+## More documentation
+
+- [Commands](docs/commands.md)
+- [Configuration](docs/configuration.md)
+- [Providers and models](docs/providers.md)
+- [Access modes and tool safety](docs/access-modes.md)
+- [Workflows](docs/workflows.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Platform notes](docs/platforms.md)
+- [Glossary](docs/glossary.md)
