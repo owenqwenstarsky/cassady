@@ -8,6 +8,9 @@ pub mod shell;
 pub mod write;
 
 use crate::access::AccessMode;
+use crate::security::{
+    PolicyDecision, SecurityContext, SecurityPolicy, ToolAction, ToolAvailability,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -42,58 +45,169 @@ pub struct ToolOutput {
     pub content: String,
 }
 
-pub fn available_tool_names(mode: AccessMode) -> Vec<String> {
-    match mode {
-        AccessMode::ReadOnly => vec!["ls".into(), "read".into(), "grep".into()],
-        AccessMode::FullAccess => vec![
-            "ls".into(),
-            "read".into(),
-            "grep".into(),
-            "write".into(),
-            "edit".into(),
-            "shell".into(),
-        ],
+impl ToolContext {
+    pub fn security_context(&self) -> SecurityContext {
+        SecurityContext {
+            mode: self.mode,
+            cwd: self.cwd.clone(),
+            read_roots: self.read_roots.clone(),
+            blocked_write_roots: self.blocked_write_roots.clone(),
+        }
     }
+}
+
+pub fn available_tool_names(mode: AccessMode) -> Vec<String> {
+    let ctx = SecurityContext {
+        mode,
+        cwd: PathBuf::new(),
+        read_roots: Vec::new(),
+        blocked_write_roots: Vec::new(),
+    };
+    all_tool_names()
+        .into_iter()
+        .filter(|name| {
+            SecurityPolicy::tool_availability(&ctx, name) != ToolAvailability::Unavailable
+        })
+        .map(str::to_string)
+        .collect()
 }
 
 pub fn specs(mode: AccessMode) -> Vec<ToolSpec> {
-    let mut specs = vec![ls::spec(), read::spec(), grep::spec()];
-    if mode.can_write() {
-        specs.push(write::spec());
-        specs.push(edit::spec());
-        specs.push(shell::spec());
+    let ctx = SecurityContext {
+        mode,
+        cwd: PathBuf::new(),
+        read_roots: Vec::new(),
+        blocked_write_roots: Vec::new(),
+    };
+    specs_for_context(&ctx)
+}
+
+pub fn specs_for_context(ctx: &SecurityContext) -> Vec<ToolSpec> {
+    let mut out = Vec::new();
+    for name in all_tool_names() {
+        if SecurityPolicy::tool_availability(ctx, name) == ToolAvailability::Unavailable {
+            continue;
+        }
+        out.push(match name {
+            "ls" => ls::spec(),
+            "read" => read::spec(),
+            "grep" => grep::spec(),
+            "write" => write::spec(),
+            "edit" => edit::spec(),
+            "shell" => shell::spec(),
+            _ => continue,
+        });
     }
-    specs
+    out
+}
+
+fn all_tool_names() -> [&'static str; 6] {
+    ["ls", "read", "grep", "write", "edit", "shell"]
 }
 
 pub async fn execute(name: &str, args: Value, ctx: &ToolContext) -> ToolOutput {
-    // Async tools
-    if name == "shell" {
-        let result = if ctx.mode.can_write() {
-            shell::run(args, ctx).await
-        } else {
-            Err(anyhow::anyhow!(
-                "tool `{name}` is unavailable in {} mode",
-                ctx.mode
-            ))
-        };
-        return result_to_output(result, ctx);
+    execute_with_approval(name, args, ctx, false).await
+}
+
+pub async fn execute_with_approval(
+    name: &str,
+    args: Value,
+    ctx: &ToolContext,
+    approved: bool,
+) -> ToolOutput {
+    if let Some(decision) = policy_decision_for_call(name, &args, ctx) {
+        match decision {
+            PolicyDecision::Allow => {}
+            PolicyDecision::Ask { reason: _ } if approved => {}
+            PolicyDecision::Ask { reason } => {
+                return ToolOutput {
+                    ok: false,
+                    content: format!("approval required before executing `{name}`: {reason}"),
+                };
+            }
+            PolicyDecision::Deny { reason } => {
+                return ToolOutput {
+                    ok: false,
+                    content: reason,
+                };
+            }
+        }
     }
 
-    // Sync tools
     let result: Result<String> = match name {
+        "shell" => shell::run(args, ctx).await,
         "ls" => ls::run(args, ctx),
         "read" => read::run(args, ctx),
         "grep" => grep::run(args, ctx),
-        "write" if ctx.mode.can_write() => write::run(args, ctx),
-        "edit" if ctx.mode.can_write() => edit::run(args, ctx),
-        "write" | "edit" => Err(anyhow::anyhow!(
-            "tool `{name}` is unavailable in {} mode",
-            ctx.mode
-        )),
+        "write" => write::run(args, ctx),
+        "edit" => edit::run(args, ctx),
         _ => Err(anyhow::anyhow!("unknown tool `{name}`")),
     };
     result_to_output(result, ctx)
+}
+
+pub fn policy_decision_for_call(
+    name: &str,
+    args: &Value,
+    ctx: &ToolContext,
+) -> Option<PolicyDecision> {
+    Some(SecurityPolicy::check(
+        &ctx.security_context(),
+        &tool_action(name, args, ctx)?,
+    ))
+}
+
+fn tool_action(name: &str, args: &Value, ctx: &ToolContext) -> Option<ToolAction> {
+    let resolve = |path: &str| {
+        let p = path::expand_tilde(path);
+        if p.is_absolute() {
+            p
+        } else {
+            ctx.cwd.join(p)
+        }
+    };
+    match name {
+        "ls" => Some(ToolAction::List {
+            path: resolve(args.get("path").and_then(Value::as_str).unwrap_or(".")),
+        }),
+        "read" => args
+            .get("files")
+            .and_then(Value::as_array)
+            .and_then(|files| files.first())
+            .and_then(|file| file.get("path"))
+            .and_then(Value::as_str)
+            .map(|path| ToolAction::Read {
+                path: resolve(path),
+            }),
+        "grep" => args
+            .get("paths")
+            .and_then(Value::as_array)
+            .and_then(|paths| paths.first())
+            .and_then(Value::as_str)
+            .or(Some("."))
+            .map(|path| ToolAction::Search {
+                path: resolve(path),
+            }),
+        "write" => args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| ToolAction::Write {
+                path: resolve(path),
+            }),
+        "edit" => args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| ToolAction::Edit {
+                path: resolve(path),
+            }),
+        "shell" => args
+            .get("command")
+            .and_then(Value::as_str)
+            .map(|command| ToolAction::Shell {
+                command: command.to_string(),
+            }),
+        _ => None,
+    }
 }
 
 fn result_to_output(result: Result<String>, ctx: &ToolContext) -> ToolOutput {

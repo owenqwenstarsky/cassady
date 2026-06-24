@@ -14,7 +14,7 @@ pub fn build_base_system_prompt(global: Option<&str>) -> String {
     }
 
     prompt.push_str("3. Tool-use style\n\n");
-    prompt.push_str("Use tools when you need current filesystem context. Prefer targeted inspection over guessing. Batch related reads into one read call when possible. Use grep before read when a directory or file may be too large to inspect directly.\n\n");
+    prompt.push_str("Use tools when you need current filesystem context. Prefer targeted inspection over guessing. Batch related reads into one read call when possible. Use grep before read when a directory or file may be too large to inspect directly. Do not ask the user in chat for permission before making a tool call; request the tool directly when it is the right next step. Cass enforces access policy at runtime and will allow, deny, or show a separate approval UI as needed.\n\n");
     prompt.push_str("4. Editing style\n\n");
     prompt.push_str("Use edit for targeted changes. Each edit must identify exact old text that appears uniquely in the file and replacement text. Do not use write to make small modifications to existing files unless a full rewrite is intentionally safer.\n");
     prompt
@@ -43,7 +43,8 @@ pub fn build_effective_system_prompt(
         allowed_tools.join(", ")
     ));
     match mode {
-        AccessMode::ReadOnly => prompt.push_str("In read-only mode, you may inspect files with ls, read, and grep only inside the launch working directory or bundled Cass docs directory. Do not request write or edit. If a task requires modification, explain what needs full-access mode.\n\n"),
+        AccessMode::ReadOnly => prompt.push_str("In read-only mode, you may inspect files with ls, read, and grep only inside the launch working directory or bundled Cass docs directory. Do not request write, edit, or shell. If a task requires modification, explain that a more permissive mode is needed.\n\n"),
+        AccessMode::WorkspaceEdit => prompt.push_str("In workspace-edit mode, you may inspect files with ls, read, and grep only inside the launch working directory or bundled Cass docs directory. You may write and edit files only inside the launch working directory. Bundled Cass docs are read-only. You may request shell when useful. Do not ask the user for shell permission in chat; call the shell tool directly and Cass will handle any required approval separately before execution.\n\n"),
         AccessMode::FullAccess => prompt.push_str("In full-access mode, you may request ls, read, grep, write, edit, and shell when needed. The shell tool runs commands in the launch working directory. Cass does not restrict read paths to the launch directory, but normal operating-system permissions still apply. write and edit are still blocked under the bundled Cass docs directory.\n\n"),
     }
     prompt.push_str("6. Response behavior\n\nAssistant output is streamed to the user. Keep user-facing text direct and useful. Tool calls and results are visible to the user, so avoid claiming work happened until the relevant tool result confirms it. After using tools or completing requested work, always end the turn with a concise final user-facing response. Do not finish a turn with only tool calls.\n");

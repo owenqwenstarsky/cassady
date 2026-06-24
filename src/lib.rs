@@ -9,6 +9,7 @@ pub mod docs;
 pub mod error;
 pub mod prompt;
 pub mod providers;
+pub mod security;
 pub mod tools;
 pub mod ui;
 

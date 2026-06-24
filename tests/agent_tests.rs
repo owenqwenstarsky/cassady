@@ -1,5 +1,5 @@
 use cassady::access::AccessMode;
-use cassady::agent::{run_turn, AgentEvent, AgentSettings};
+use cassady::agent::{run_turn, run_turn_with_commands, AgentCommand, AgentEvent, AgentSettings};
 use cassady::config::{Config, ReasoningEffort, ReasoningRequestFormat};
 use cassady::conversation::{Conversation, Record};
 use tempfile::tempdir;
@@ -9,6 +9,13 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn sse(body: &str) -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_raw(body.as_bytes().to_vec(), "text/event-stream")
+}
+
+fn tool_call_sse(id: &str, name: &str, arguments: &str) -> ResponseTemplate {
+    sse(&format!(
+        "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{id}\",\"type\":\"function\",\"function\":{{\"name\":\"{name}\",\"arguments\":{}}}}}]}}}}]}}\r\n\r\ndata: [DONE]\r\n\r\n",
+        serde_json::to_string(arguments).unwrap()
+    ))
 }
 
 #[tokio::test]
@@ -303,4 +310,181 @@ async fn empty_final_response_is_reprompted_and_persisted() {
         Record::Assistant { content, tool_calls, .. }
             if content == "Done." && tool_calls.is_empty()
     ));
+}
+
+#[tokio::test]
+async fn workspace_edit_shell_does_not_execute_until_approved() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(tool_call_sse(
+            "call_shell",
+            "shell",
+            r#"{"command":"touch marker"}"#,
+        ))
+        .with_priority(10)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("exit code: 0"))
+        .respond_with(sse(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Approved.\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+        ))
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let root = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let docs = tempdir().unwrap();
+    let config = Config {
+        root: root.path().to_path_buf(),
+        docs_dir: docs.path().to_path_buf(),
+        model: "test-model".into(),
+        active_provider: cassady::config::ResolvedProviderConfig {
+            base_url: server.uri(),
+            api_key: "test-key".into(),
+            ..Config::default().active_provider
+        },
+        ..Config::default()
+    };
+    let conversation = Conversation::create(
+        &config.conversations_dir(),
+        &config.model,
+        cwd.path(),
+        "base prompt".into(),
+    )
+    .unwrap();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentCommand>();
+    let marker = cwd.path().join("marker");
+
+    let handle = tokio::spawn(run_turn_with_commands(
+        conversation,
+        "run shell".into(),
+        AgentSettings {
+            config,
+            cwd: cwd.path().to_path_buf(),
+            mode: AccessMode::WorkspaceEdit,
+            reasoning_effort: ReasoningEffort::Off,
+        },
+        event_tx,
+        command_rx,
+    ));
+
+    let request_id = loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let AgentEvent::ApprovalRequested { request_id, .. } = event {
+            break request_id;
+        }
+    };
+    assert!(!marker.exists());
+    command_tx
+        .send(AgentCommand::ApprovalDecision {
+            request_id,
+            approved: true,
+        })
+        .unwrap();
+
+    let updated = handle.await.unwrap().unwrap();
+    assert!(marker.exists());
+    assert!(updated.records.iter().any(|record| matches!(
+        record,
+        Record::Tool { name, ok, content, .. }
+            if name == "shell" && *ok && content.contains("exit code: 0")
+    )));
+}
+
+#[tokio::test]
+async fn workspace_edit_denied_shell_appends_failed_tool_result_without_execution() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(tool_call_sse(
+            "call_shell",
+            "shell",
+            r#"{"command":"touch marker"}"#,
+        ))
+        .with_priority(10)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("user denied approval"))
+        .respond_with(sse(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Denied.\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+        ))
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let root = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let docs = tempdir().unwrap();
+    let config = Config {
+        root: root.path().to_path_buf(),
+        docs_dir: docs.path().to_path_buf(),
+        model: "test-model".into(),
+        active_provider: cassady::config::ResolvedProviderConfig {
+            base_url: server.uri(),
+            api_key: "test-key".into(),
+            ..Config::default().active_provider
+        },
+        ..Config::default()
+    };
+    let conversation = Conversation::create(
+        &config.conversations_dir(),
+        &config.model,
+        cwd.path(),
+        "base prompt".into(),
+    )
+    .unwrap();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentCommand>();
+    let marker = cwd.path().join("marker");
+
+    let handle = tokio::spawn(run_turn_with_commands(
+        conversation,
+        "run shell".into(),
+        AgentSettings {
+            config,
+            cwd: cwd.path().to_path_buf(),
+            mode: AccessMode::WorkspaceEdit,
+            reasoning_effort: ReasoningEffort::Off,
+        },
+        event_tx,
+        command_rx,
+    ));
+
+    let request_id = loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if let AgentEvent::ApprovalRequested { request_id, .. } = event {
+            break request_id;
+        }
+    };
+    command_tx
+        .send(AgentCommand::ApprovalDecision {
+            request_id,
+            approved: false,
+        })
+        .unwrap();
+
+    let updated = handle.await.unwrap().unwrap();
+    assert!(!marker.exists());
+    assert!(updated.records.iter().any(|record| matches!(
+        record,
+        Record::Tool { name, ok, content, .. }
+            if name == "shell" && !*ok && content.contains("user denied approval")
+    )));
 }

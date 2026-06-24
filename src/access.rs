@@ -6,26 +6,33 @@ use std::fmt;
 pub enum AccessMode {
     #[default]
     ReadOnly,
+    WorkspaceEdit,
     FullAccess,
 }
 
 impl AccessMode {
-    pub fn toggle(self) -> Self {
+    pub fn next(self) -> Self {
         match self {
-            Self::ReadOnly => Self::FullAccess,
+            Self::ReadOnly => Self::WorkspaceEdit,
+            Self::WorkspaceEdit => Self::FullAccess,
             Self::FullAccess => Self::ReadOnly,
         }
+    }
+
+    pub fn toggle(self) -> Self {
+        self.next()
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReadOnly => "read-only",
+            Self::WorkspaceEdit => "workspace-edit",
             Self::FullAccess => "full-access",
         }
     }
 
     pub fn can_write(self) -> bool {
-        matches!(self, Self::FullAccess)
+        matches!(self, Self::WorkspaceEdit | Self::FullAccess)
     }
 }
 

@@ -28,11 +28,15 @@ pub struct Cli {
     pub cwd: Option<PathBuf>,
 
     /// Force read-only mode.
-    #[arg(long, conflicts_with = "full_access")]
+    #[arg(long, conflicts_with_all = ["workspace_edit", "full_access"])]
     pub readonly: bool,
 
+    /// Force workspace-edit mode: edit workspace files directly, ask before shell.
+    #[arg(long, conflicts_with_all = ["readonly", "full_access"])]
+    pub workspace_edit: bool,
+
     /// Force full-access mode.
-    #[arg(long, conflicts_with = "readonly")]
+    #[arg(long, conflicts_with_all = ["readonly", "workspace_edit"])]
     pub full_access: bool,
 }
 

@@ -4,11 +4,12 @@ use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
 use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
 use crate::providers::types::ModelMessage;
+use crate::security::PolicyDecision;
 use crate::tools::{self, ToolContext, ToolRuntimeEvent};
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -32,8 +33,24 @@ pub enum AgentEvent {
         ok: bool,
         content: String,
     },
+    ApprovalRequested {
+        request_id: String,
+        tool_call_id: String,
+        name: String,
+        arguments: Value,
+        reason: String,
+    },
+    ApprovalResolved {
+        request_id: String,
+        approved: bool,
+    },
     Status(String),
     TurnFinished,
+}
+
+#[derive(Debug, Clone)]
+pub enum AgentCommand {
+    ApprovalDecision { request_id: String, approved: bool },
 }
 
 #[derive(Debug, Clone)]
@@ -47,10 +64,21 @@ pub struct AgentSettings {
 const EMPTY_FINAL_RETRY_PROMPT: &str = "The previous response contained no user-facing text. Provide a concise final user-facing response summarizing the outcome. Do not call tools unless absolutely necessary.";
 
 pub async fn run_turn(
+    conversation: Conversation,
+    user_message: String,
+    settings: AgentSettings,
+    tx: mpsc::UnboundedSender<AgentEvent>,
+) -> Result<Conversation> {
+    let (_command_tx, command_rx) = mpsc::unbounded_channel();
+    run_turn_with_commands(conversation, user_message, settings, tx, command_rx).await
+}
+
+pub async fn run_turn_with_commands(
     mut conversation: Conversation,
     user_message: String,
     settings: AgentSettings,
     tx: mpsc::UnboundedSender<AgentEvent>,
+    mut command_rx: mpsc::UnboundedReceiver<AgentCommand>,
 ) -> Result<Conversation> {
     conversation.append(Record::User {
         content: user_message,
@@ -114,7 +142,11 @@ pub async fn run_turn(
             });
         }
         let completion = match provider
-            .complete(messages, tools::specs(settings.mode), &tx)
+            .complete(
+                messages,
+                tools::specs_for_context(&tool_ctx.security_context()),
+                &tx,
+            )
             .await
         {
             Ok(c) => c,
@@ -166,11 +198,119 @@ pub async fn run_turn(
                 name: call_name.clone(),
                 arguments: call_arguments.clone(),
             });
+            let mut approved =
+                match tools::policy_decision_for_call(&call_name, &call_arguments, &tool_ctx) {
+                    Some(PolicyDecision::Allow) | None => false,
+                    Some(PolicyDecision::Deny { reason }) => {
+                        let output = tools::ToolOutput {
+                            ok: false,
+                            content: reason,
+                        };
+                        let _ = tx.send(AgentEvent::ToolResult {
+                            id: call_id.clone(),
+                            name: call_name.clone(),
+                            ok: output.ok,
+                            content: output.content.clone(),
+                        });
+                        conversation.append(Record::Tool {
+                            tool_call_id: call_id,
+                            name: call_name,
+                            ok: output.ok,
+                            content: output.content,
+                            ts: now_ts(),
+                        })?;
+                        continue;
+                    }
+                    Some(PolicyDecision::Ask { reason }) => {
+                        let request_id = format!("approval_{}", nanoid::nanoid!(8));
+                        let _ = tx.send(AgentEvent::ApprovalRequested {
+                            request_id: request_id.clone(),
+                            tool_call_id: call_id.clone(),
+                            name: call_name.clone(),
+                            arguments: call_arguments.clone(),
+                            reason,
+                        });
+                        let approved = wait_for_approval(&mut command_rx, &request_id).await;
+                        let _ = tx.send(AgentEvent::ApprovalResolved {
+                            request_id: request_id.clone(),
+                            approved,
+                        });
+                        if !approved {
+                            let output = tools::ToolOutput {
+                                ok: false,
+                                content: "user denied approval for this tool call".into(),
+                            };
+                            let _ = tx.send(AgentEvent::ToolResult {
+                                id: call_id.clone(),
+                                name: call_name.clone(),
+                                ok: output.ok,
+                                content: output.content.clone(),
+                            });
+                            conversation.append(Record::Tool {
+                                tool_call_id: call_id,
+                                name: call_name,
+                                ok: output.ok,
+                                content: output.content,
+                                ts: now_ts(),
+                            })?;
+                            continue;
+                        }
+                        true
+                    }
+                };
+            if !approved {
+                if let Some(reason) = destructive_confirmation_reason(
+                    settings.mode,
+                    settings.config.confirm_destructive_operations,
+                    &call_name,
+                    &call_arguments,
+                    &settings.cwd,
+                ) {
+                    let request_id = format!("approval_{}", nanoid::nanoid!(8));
+                    let _ = tx.send(AgentEvent::ApprovalRequested {
+                        request_id: request_id.clone(),
+                        tool_call_id: call_id.clone(),
+                        name: call_name.clone(),
+                        arguments: call_arguments.clone(),
+                        reason,
+                    });
+                    approved = wait_for_approval(&mut command_rx, &request_id).await;
+                    let _ = tx.send(AgentEvent::ApprovalResolved {
+                        request_id,
+                        approved,
+                    });
+                    if !approved {
+                        let output = tools::ToolOutput {
+                            ok: false,
+                            content: "user denied approval for this destructive tool call".into(),
+                        };
+                        let _ = tx.send(AgentEvent::ToolResult {
+                            id: call_id.clone(),
+                            name: call_name.clone(),
+                            ok: output.ok,
+                            content: output.content.clone(),
+                        });
+                        conversation.append(Record::Tool {
+                            tool_call_id: call_id,
+                            name: call_name,
+                            ok: output.ok,
+                            content: output.content,
+                            ts: now_ts(),
+                        })?;
+                        continue;
+                    }
+                }
+            }
             let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel::<ToolRuntimeEvent>();
             let mut call_tool_ctx = tool_ctx.clone();
             call_tool_ctx.runtime_tx = Some(runtime_tx);
             let output = {
-                let execute = tools::execute(&call_name, call_arguments, &call_tool_ctx);
+                let execute = tools::execute_with_approval(
+                    &call_name,
+                    call_arguments,
+                    &call_tool_ctx,
+                    approved,
+                );
                 tokio::pin!(execute);
                 let output = loop {
                     tokio::select! {
@@ -202,6 +342,87 @@ pub async fn run_turn(
     }
     let _ = tx.send(AgentEvent::TurnFinished);
     Ok(conversation)
+}
+
+async fn wait_for_approval(
+    command_rx: &mut mpsc::UnboundedReceiver<AgentCommand>,
+    request_id: &str,
+) -> bool {
+    while let Some(command) = command_rx.recv().await {
+        match command {
+            AgentCommand::ApprovalDecision {
+                request_id: id,
+                approved,
+            } if id == request_id => return approved,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn destructive_confirmation_reason(
+    mode: AccessMode,
+    enabled: bool,
+    name: &str,
+    arguments: &Value,
+    cwd: &Path,
+) -> Option<String> {
+    if !enabled || mode != AccessMode::FullAccess {
+        return None;
+    }
+    match name {
+        "write" => {
+            let path = arguments.get("path")?.as_str()?;
+            let p = crate::tools::path::expand_tilde(path);
+            let abs = if p.is_absolute() { p } else { cwd.join(p) };
+            if abs.exists() {
+                Some(format!(
+                    "write will overwrite an existing file in full-access mode: {}",
+                    abs.display()
+                ))
+            } else {
+                None
+            }
+        }
+        "edit" => arguments
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|path| format!("edit will modify a file in full-access mode: {path}")),
+        "shell" => {
+            let command = arguments.get("command")?.as_str()?;
+            if shell_command_looks_destructive(command) {
+                Some(format!(
+                    "shell command appears destructive and requires confirmation: {command}"
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn shell_command_looks_destructive(command: &str) -> bool {
+    let lowered = command.to_ascii_lowercase();
+    let risky = [
+        "rm ",
+        "rm -",
+        "rmdir",
+        "mv ",
+        "chmod ",
+        "chown ",
+        "dd ",
+        "mkfs",
+        "truncate ",
+        "shred",
+        ">",
+        "tee ",
+        "git reset",
+        "git clean",
+        "drop table",
+        "delete from",
+    ];
+    risky.iter().any(|needle| lowered.contains(needle))
 }
 
 fn forward_tool_runtime_event(

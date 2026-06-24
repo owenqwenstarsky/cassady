@@ -16,7 +16,7 @@ fn default_path() -> String {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "ls".into(),
-        description: "List a directory. In read-only mode, paths must stay inside the launch cwd or bundled docs directory."
+        description: "List a directory. In read-only and workspace-edit modes, paths must stay inside the launch cwd or bundled docs directory."
             .into(),
         parameters: schema::object(
             json!({

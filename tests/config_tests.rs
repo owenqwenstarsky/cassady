@@ -15,6 +15,7 @@ fn cli() -> Cli {
         api_key_env: None,
         cwd: None,
         readonly: false,
+        workspace_edit: false,
         full_access: false,
     }
 }

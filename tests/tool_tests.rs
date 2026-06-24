@@ -113,6 +113,62 @@ async fn read_only_can_read_and_search_docs_root() {
 }
 
 #[tokio::test]
+async fn workspace_edit_allows_workspace_edits_but_blocks_shell_without_approval() {
+    let dir = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\nbeta\n").unwrap();
+    let context = ctx(dir.path(), AccessMode::WorkspaceEdit);
+
+    let edit = tools::execute(
+        "edit",
+        json!({"path":"a.txt", "edits":[{"old_text":"beta", "new_text":"BETA"}]}),
+        &context,
+    )
+    .await;
+    assert!(edit.ok, "{}", edit.content);
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "alpha\nBETA\n"
+    );
+
+    let outside_write = tools::execute(
+        "write",
+        json!({"path": outside.path().join("x.txt").display().to_string(), "content":"nope"}),
+        &context,
+    )
+    .await;
+    assert!(!outside_write.ok);
+    assert!(outside_write
+        .content
+        .contains("escapes workspace-edit root"));
+
+    let shell = tools::execute("shell", json!({"command":"touch marker"}), &context).await;
+    assert!(!shell.ok);
+    assert!(shell.content.contains("approval required"));
+    assert!(!dir.path().join("marker").exists());
+}
+
+#[tokio::test]
+async fn workspace_edit_blocks_symlink_escape_write() {
+    let dir = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("outside_link")).unwrap();
+        let context = ctx(dir.path(), AccessMode::WorkspaceEdit);
+        let write = tools::execute(
+            "write",
+            json!({"path":"outside_link/new.txt", "content":"nope"}),
+            &context,
+        )
+        .await;
+        assert!(!write.ok);
+        assert!(write.content.contains("escapes workspace-edit root"));
+        assert!(!outside.path().join("new.txt").exists());
+    }
+}
+
+#[tokio::test]
 async fn edit_is_exact_and_atomic_on_validation_failure() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
@@ -125,6 +181,9 @@ async fn edit_is_exact_and_atomic_on_validation_failure() {
     )
     .await;
     assert!(ok.ok);
+    assert!(ok.content.contains("--- "));
+    assert!(ok.content.contains("-beta"));
+    assert!(ok.content.contains("+BETA"));
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "alpha\nBETA\ngamma\n"

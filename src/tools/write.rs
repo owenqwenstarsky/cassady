@@ -15,7 +15,7 @@ struct Args {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "write".into(),
-        description: "Create or overwrite a text file. Requires full-access mode. Writes under Cass bundled docs are blocked. Uses atomic temp-file-and-rename where practical.".into(),
+        description: "Create or overwrite a text file when the active access policy permits writes. In workspace-edit mode, writes must stay inside the launch workspace. Writes under Cass bundled docs are blocked. Uses atomic temp-file-and-rename where practical.".into(),
         parameters: schema::object(json!({
             "path": {"type":"string"},
             "content": {"type":"string"}

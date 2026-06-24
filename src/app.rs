@@ -1,4 +1,4 @@
-use crate::agent::{self, AgentEvent, AgentSettings};
+use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
 use crate::cli::{self, Command};
 use crate::config::{Config, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
@@ -159,6 +159,7 @@ async fn run_tui(
     transcript.extend(blocks_from_conversation(&conversation));
 
     let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let mut agent_command_tx: Option<mpsc::UnboundedSender<AgentCommand>> = None;
     let mut input = String::new();
     let mut mode = config.default_access_mode;
     let mut status = String::new();
@@ -177,6 +178,7 @@ async fn run_tui(
     let mut stick_to_bottom = true;
     let mut chat_id = conversation.id.clone();
     let mut autofill_selected = 0usize;
+    let mut pending_approval: Option<PendingApproval> = None;
 
     loop {
         drain_agent_events(
@@ -188,6 +190,7 @@ async fn run_tui(
                 active_assistant: &mut active_assistant,
                 active_reasoning: &mut active_reasoning,
                 active_tools: &mut active_tools,
+                pending_approval: &mut pending_approval,
                 status: &mut status,
                 stick_to_bottom,
                 show_full_tools,
@@ -208,6 +211,7 @@ async fn run_tui(
                     active_assistant: &mut active_assistant,
                     active_reasoning: &mut active_reasoning,
                     active_tools: &mut active_tools,
+                    pending_approval: &mut pending_approval,
                     status: &mut status,
                     stick_to_bottom,
                     show_full_tools,
@@ -262,6 +266,8 @@ async fn run_tui(
             cancel_requested = false;
             current_turn_start_len = None;
             current_turn_message = None;
+            agent_command_tx = None;
+            pending_approval = None;
             status = finished_status;
         }
 
@@ -312,6 +318,47 @@ async fn run_tui(
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let busy = handle.is_some();
+                    if busy {
+                        if let Some(pending) = pending_approval.clone() {
+                            match key.code {
+                                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    if let Some(tx) = &agent_command_tx {
+                                        let _ = tx.send(AgentCommand::ApprovalDecision {
+                                            request_id: pending.request_id,
+                                            approved: true,
+                                        });
+                                    }
+                                    hide_pending_approval(
+                                        &mut pending_approval,
+                                        &mut transcript,
+                                        &mut active_assistant,
+                                        &mut active_reasoning,
+                                        &mut active_tools,
+                                    );
+                                    status = "approval sent".into();
+                                    continue;
+                                }
+                                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                    if let Some(tx) = &agent_command_tx {
+                                        let _ = tx.send(AgentCommand::ApprovalDecision {
+                                            request_id: pending.request_id,
+                                            approved: false,
+                                        });
+                                    }
+                                    hide_pending_approval(
+                                        &mut pending_approval,
+                                        &mut transcript,
+                                        &mut active_assistant,
+                                        &mut active_reasoning,
+                                        &mut active_tools,
+                                    );
+                                    status = "approval denied".into();
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     match (key.code, key.modifiers) {
                         (KeyCode::Char('c'), m) if m.contains(KeyModifiers::CONTROL) => {
                             let now = Instant::now();
@@ -362,7 +409,7 @@ async fn run_tui(
                             if busy {
                                 status = "mode can be changed when idle".into();
                             } else {
-                                mode = mode.toggle();
+                                mode = mode.next();
                                 status = format!("mode: {mode}");
                             }
                         }
@@ -680,8 +727,11 @@ async fn run_tui(
                                 };
                                 let convo = conversation.clone();
                                 let tx2 = tx.clone();
+                                let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<AgentCommand>();
+                                agent_command_tx = Some(cmd_tx);
                                 handle = Some(tokio::spawn(async move {
-                                    agent::run_turn(convo, msg, settings, tx2).await
+                                    agent::run_turn_with_commands(convo, msg, settings, tx2, cmd_rx)
+                                        .await
                                 }));
                                 stick_to_bottom = true;
                                 scroll = bottom_scroll(
@@ -776,6 +826,12 @@ async fn run_tui(
     }
 }
 
+#[derive(Debug, Clone)]
+struct PendingApproval {
+    request_id: String,
+    block_index: usize,
+}
+
 struct AgentEventContext<'a> {
     terminal: &'a terminal::CassTerminal,
     input: &'a str,
@@ -783,6 +839,7 @@ struct AgentEventContext<'a> {
     active_assistant: &'a mut Option<usize>,
     active_reasoning: &'a mut Option<usize>,
     active_tools: &'a mut HashMap<String, usize>,
+    pending_approval: &'a mut Option<PendingApproval>,
     status: &'a mut String,
     stick_to_bottom: bool,
     show_full_tools: bool,
@@ -909,6 +966,56 @@ fn apply_agent_event(event: AgentEvent, ctx: &mut AgentEventContext<'_>) -> Resu
             });
             update_bottom_scroll(ctx)?;
         }
+        AgentEvent::ApprovalRequested {
+            request_id,
+            tool_call_id,
+            name,
+            arguments,
+            reason,
+        } => {
+            *ctx.active_assistant = None;
+            *ctx.active_reasoning = None;
+            let args =
+                serde_json::to_string_pretty(&arguments).unwrap_or_else(|_| arguments.to_string());
+            let block_index = ctx.transcript.len();
+            *ctx.pending_approval = Some(PendingApproval {
+                request_id: request_id.clone(),
+                block_index,
+            });
+            ctx.transcript.push(TranscriptBlock {
+                kind: TranscriptKind::Status,
+                title: format!("approval required ({})", short_call_id(&tool_call_id)),
+                content: format!(
+                    "{name} requires approval before execution.\n\nReason: {reason}\n\nArguments:\n{args}\n\nPress y to approve, n or Esc to deny, Ctrl-C to cancel the turn."
+                ),
+            });
+            *ctx.status = "approval required: press y to approve, n to deny".into();
+            update_bottom_scroll(ctx)?;
+        }
+        AgentEvent::ApprovalResolved {
+            request_id,
+            approved,
+        } => {
+            if ctx
+                .pending_approval
+                .as_ref()
+                .is_some_and(|pending| pending.request_id == request_id)
+            {
+                hide_pending_approval(
+                    ctx.pending_approval,
+                    ctx.transcript,
+                    ctx.active_assistant,
+                    ctx.active_reasoning,
+                    ctx.active_tools,
+                );
+            }
+            *ctx.status = if approved {
+                "approval accepted"
+            } else {
+                "approval denied"
+            }
+            .into();
+        }
         AgentEvent::Status(s) => {
             ctx.transcript.push(TranscriptBlock {
                 kind: TranscriptKind::Status,
@@ -939,6 +1046,45 @@ fn active_tool_block(ctx: &mut AgentEventContext<'_>, id: &str, name: &str) -> u
     let idx = ctx.transcript.len() - 1;
     ctx.active_tools.insert(id.to_string(), idx);
     idx
+}
+
+fn hide_pending_approval(
+    pending_approval: &mut Option<PendingApproval>,
+    transcript: &mut Vec<TranscriptBlock>,
+    active_assistant: &mut Option<usize>,
+    active_reasoning: &mut Option<usize>,
+    active_tools: &mut HashMap<String, usize>,
+) {
+    let Some(pending) = pending_approval.take() else {
+        return;
+    };
+    let idx = pending.block_index;
+    if idx >= transcript.len() {
+        return;
+    }
+    transcript.remove(idx);
+    adjust_index_after_remove(active_assistant, idx);
+    adjust_index_after_remove(active_reasoning, idx);
+    active_tools.retain(|_, tool_idx| {
+        if *tool_idx == idx {
+            false
+        } else {
+            if *tool_idx > idx {
+                *tool_idx -= 1;
+            }
+            true
+        }
+    });
+}
+
+fn adjust_index_after_remove(index: &mut Option<usize>, removed: usize) {
+    if let Some(value) = index {
+        if *value == removed {
+            *index = None;
+        } else if *value > removed {
+            *value -= 1;
+        }
+    }
 }
 
 fn mark_active_tool_blocks_cancelled(

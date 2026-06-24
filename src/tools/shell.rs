@@ -16,7 +16,7 @@ struct Args {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "shell".into(),
-        description: "Run a shell command in the launch cwd. Requires full-access mode. Streams stdout/stderr while running, then returns stdout, stderr, and exit code. Use timeout (seconds) to limit runtime."
+        description: "Run a shell command in the launch cwd. Request this tool directly when shell is useful; do not ask the user for permission in chat. Cass may show a separate approval UI before execution depending on the active access mode. Streams stdout/stderr while running, then returns stdout, stderr, and exit code. Use timeout (seconds) to limit runtime."
             .into(),
         parameters: schema::object(
             json!({
@@ -30,9 +30,6 @@ pub fn spec() -> ToolSpec {
 
 pub async fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     let args: Args = serde_json::from_value(args)?;
-    if !ctx.mode.can_write() {
-        bail!("shell tool requires full-access mode");
-    }
 
     let mut cmd = tokio::process::Command::new("sh");
     cmd.arg("-c").arg(&args.command);

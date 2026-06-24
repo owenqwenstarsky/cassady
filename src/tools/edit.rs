@@ -19,7 +19,7 @@ struct EditArg {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "edit".into(),
-        description: "Safely edit a file using exact old_text/new_text replacements. Every old_text must match exactly once in the original file. Requires full-access mode. Writes under Cass bundled docs are blocked.".into(),
+        description: "Safely edit a file using exact old_text/new_text replacements when the active access policy permits writes. Every old_text must match exactly once in the original file. In workspace-edit mode, edits must stay inside the launch workspace. Writes under Cass bundled docs are blocked.".into(),
         parameters: schema::object(json!({
             "path": {"type":"string"},
             "edits": {"type":"array", "items": {
@@ -74,10 +74,34 @@ pub fn run(args: Value, ctx: &ToolContext) -> Result<String> {
     out.push_str(&original[cursor..]);
     super::write::atomic_write(&path, out.as_bytes())?;
     Ok(format!(
-        "applied {} edit(s) to {}",
+        "applied {} edit(s) to {}\n\n{}",
         args.edits.len(),
-        path.display()
+        path.display(),
+        unified_diff(&path.display().to_string(), &original, &out)
     ))
+}
+
+fn unified_diff(path: &str, before: &str, after: &str) -> String {
+    let before_lines: Vec<&str> = before.lines().collect();
+    let after_lines: Vec<&str> = after.lines().collect();
+    let mut out = String::new();
+    out.push_str(&format!("--- {path} before\n"));
+    out.push_str(&format!("+++ {path} after\n"));
+    out.push_str("@@\n");
+    let max = before_lines.len().max(after_lines.len());
+    for idx in 0..max {
+        match (before_lines.get(idx), after_lines.get(idx)) {
+            (Some(a), Some(b)) if a == b => out.push_str(&format!(" {a}\n")),
+            (Some(a), Some(b)) => {
+                out.push_str(&format!("-{a}\n"));
+                out.push_str(&format!("+{b}\n"));
+            }
+            (Some(a), None) => out.push_str(&format!("-{a}\n")),
+            (None, Some(b)) => out.push_str(&format!("+{b}\n")),
+            (None, None) => {}
+        }
+    }
+    out
 }
 
 fn preview(s: &str) -> String {

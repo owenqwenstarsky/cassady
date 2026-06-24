@@ -348,6 +348,7 @@ fn footer_text(state: &RenderState<'_>) -> String {
     let busy = if state.busy { "running" } else { "idle" };
     let mode = match state.mode {
         AccessMode::ReadOnly => "read-only",
+        AccessMode::WorkspaceEdit => "workspace-edit",
         AccessMode::FullAccess => "full-access",
     };
     let mut parts = vec![

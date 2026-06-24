@@ -1,8 +1,9 @@
 use crate::access::AccessMode;
-use anyhow::{bail, Context, Result};
-use std::ffi::OsString;
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+use crate::security::{
+    canonicalize_existing, canonicalize_for_create_or_write, is_under_any_root, normalize_lexical,
+};
+use anyhow::{bail, Result};
+use std::path::{Path, PathBuf};
 
 pub fn expand_tilde(path: &str) -> PathBuf {
     if path == "~" {
@@ -24,8 +25,8 @@ pub fn resolve_existing(
 ) -> Result<PathBuf> {
     let p = expand_tilde(input);
     let abs = if p.is_absolute() { p } else { cwd.join(p) };
-    let canon = fs::canonicalize(&abs).with_context(|| format!("resolving {}", abs.display()))?;
-    if matches!(mode, AccessMode::ReadOnly) {
+    let canon = canonicalize_existing(&abs)?;
+    if matches!(mode, AccessMode::ReadOnly | AccessMode::WorkspaceEdit) {
         ensure_under_any_root(&canon, read_roots)?;
     }
     Ok(canon)
@@ -37,20 +38,30 @@ pub fn resolve_for_write(
     mode: AccessMode,
     blocked_write_roots: &[PathBuf],
 ) -> Result<PathBuf> {
-    if !mode.can_write() {
-        bail!("write access requires full-access mode");
+    if matches!(mode, AccessMode::ReadOnly) {
+        bail!("write access is unavailable in read-only mode");
     }
     let p = expand_tilde(input);
     let abs = if p.is_absolute() { p } else { cwd.join(p) };
     let normalized = normalize_lexical(&abs);
     ensure_not_under_any_root(&normalized, blocked_write_roots)?;
+    if matches!(mode, AccessMode::WorkspaceEdit) {
+        let canon = canonicalize_for_create_or_write(&normalized)?;
+        let workspace = canonicalize_existing(cwd)?;
+        if !canon.starts_with(&workspace) {
+            bail!(
+                "write path escapes workspace-edit root: {} (workspace root: {})",
+                canon.display(),
+                workspace.display()
+            );
+        }
+    }
     Ok(normalized)
 }
 
 fn ensure_under_any_root(path: &Path, roots: &[PathBuf]) -> Result<()> {
     for root in roots {
-        let root_canon = fs::canonicalize(root)
-            .with_context(|| format!("resolving read root {}", root.display()))?;
+        let root_canon = canonicalize_existing(root)?;
         if path.starts_with(&root_canon) {
             return Ok(());
         }
@@ -88,59 +99,18 @@ fn ensure_not_under_any_root(path: &Path, roots: &[PathBuf]) -> Result<()> {
         }
     }
 
-    let canon = canonicalize_for_policy(path)?;
-    for root in roots {
-        let root_canon = canonicalize_for_policy(root)
-            .with_context(|| format!("resolving blocked write root {}", root.display()))?;
-        if canon.starts_with(&root_canon) {
-            bail!(
-                "writes are blocked under read-only docs directory: {}",
-                root_canon.display()
-            );
-        }
+    let canon = canonicalize_for_create_or_write(path)?;
+    let canon_roots: Vec<PathBuf> = roots
+        .iter()
+        .filter_map(|root| canonicalize_for_create_or_write(root).ok())
+        .collect();
+    if is_under_any_root(&canon, &canon_roots) {
+        bail!(
+            "writes are blocked under read-only docs directory: {}",
+            canon.display()
+        );
     }
     Ok(())
-}
-
-fn canonicalize_for_policy(path: &Path) -> Result<PathBuf> {
-    if path.exists() {
-        return fs::canonicalize(path).with_context(|| format!("resolving {}", path.display()));
-    }
-
-    let mut missing = Vec::<OsString>::new();
-    let mut ancestor = path;
-    loop {
-        if ancestor.exists() {
-            let mut out = fs::canonicalize(ancestor)
-                .with_context(|| format!("resolving {}", ancestor.display()))?;
-            for component in missing.iter().rev() {
-                out.push(component);
-            }
-            return Ok(normalize_lexical(&out));
-        }
-
-        let Some(name) = ancestor.file_name() else {
-            bail!("no existing ancestor for {}", path.display());
-        };
-        missing.push(name.to_os_string());
-        ancestor = ancestor
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("no existing ancestor for {}", path.display()))?;
-    }
-}
-
-fn normalize_lexical(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 pub fn is_probably_binary(bytes: &[u8]) -> bool {

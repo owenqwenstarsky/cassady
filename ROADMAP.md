@@ -25,24 +25,21 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
   - Replace superseded model-context output with a short note indicating it was omitted because a newer read exists.
   - Be careful with partial reads: a later read of the same file does not always supersede a different line range.
 
-### Usage and Cost Visibility
-
-- [ ] **Track provider-reported usage.** Capture input/output token usage returned by providers when available.
-  - Support streaming usage metadata for OpenAI-compatible providers where supported.
-  - Persist usage information with the conversation when possible.
-  - Show useful per-turn or session usage in the UI/status output.
-
-- [ ] **Track cost when available.** Display cost in the footer or status when the provider returns cost directly.
-  - If provider cost is unavailable, show token usage rather than estimating silently.
-  - Add explicit pricing metadata later if estimated costs are needed.
-
 ### Safety and Reviewability
 
-- [ ] **Optional destructive-operation confirmation.** Add a configurable confirmation prompt for risky operations in full-access mode.
+- [x] **Policy-based access control and workspace-edit mode.** Add a central security policy layer and a new `workspace-edit` mode. See `plans/SECURITY_ACCESS_MODES_PLAN.md`.
+  - `read-only`: inspect only inside the launch workspace and bundled Cass docs.
+  - `workspace-edit`: read and edit files inside the launch workspace without confirmation; bundled Cass docs remain read-only.
+  - `workspace-edit`: expose `shell`, but require explicit user confirmation before any command is spawned.
+  - `full-access`: preserve broad access while routing decisions through the same policy layer for future restrictions.
+  - Refactor tool gating, path authorization, prompt/tool availability, and shell approval through centralized policy decisions instead of scattered `mode.can_write()` checks.
+  - Add symlink-aware workspace boundary checks and tests for denied writes outside the workspace.
+
+- [x] **Optional destructive-operation confirmation.** Add a configurable confirmation prompt for risky operations in full-access mode, built on the new policy/approval layer.
   - Cover `write`, `edit`, and `shell` operations that overwrite files or appear destructive.
   - Keep the first version conservative and explicit rather than trying to perfectly classify every shell command.
   - Do not block normal read-only tools.
 
-- [ ] **Edit diff output.** Make `edit` changes reviewable in the transcript.
+- [x] **Edit diff output.** Make `edit` changes reviewable in the transcript.
   - First version: show a unified before/after diff after the edit is applied.
   - Later versions may add pre-apply approval, but that requires a confirmation flow between tools and the TUI.

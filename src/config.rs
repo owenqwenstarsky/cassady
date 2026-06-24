@@ -43,6 +43,8 @@ pub struct ConfigFile {
     pub ui_tool_result_limit: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_reasoning: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirm_destructive_operations: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +146,7 @@ pub struct Config {
     pub model_tool_result_limit: usize,
     pub ui_tool_result_limit: usize,
     pub show_reasoning: bool,
+    pub confirm_destructive_operations: bool,
     pub root: PathBuf,
     pub docs_dir: PathBuf,
 }
@@ -257,6 +260,7 @@ impl Default for Config {
             model_tool_result_limit: 24_000,
             ui_tool_result_limit: 4_000,
             show_reasoning: false,
+            confirm_destructive_operations: false,
             root,
             docs_dir,
         }
@@ -321,10 +325,16 @@ impl Config {
             if let Some(v) = file.show_reasoning {
                 cfg.show_reasoning = v;
             }
+            if let Some(v) = file.confirm_destructive_operations {
+                cfg.confirm_destructive_operations = v;
+            }
         }
 
         if cli.readonly {
             cfg.default_access_mode = AccessMode::ReadOnly;
+        }
+        if cli.workspace_edit {
+            cfg.default_access_mode = AccessMode::WorkspaceEdit;
         }
         if cli.full_access {
             cfg.default_access_mode = AccessMode::FullAccess;
