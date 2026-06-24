@@ -165,10 +165,6 @@ fn transcript_lines_from(
             continue;
         }
 
-        if should_hide_collapsed_tool_block(block, show_full_tools) {
-            continue;
-        }
-
         let style = style_for(&block.kind);
         lines.push(Line::styled(display_heading(block, show_full_tools), style));
 
@@ -595,13 +591,6 @@ fn display_content(block: &TranscriptBlock, show_full_tools: bool, show_reasonin
     }
 }
 
-fn should_hide_collapsed_tool_block(block: &TranscriptBlock, show_full_tools: bool) -> bool {
-    !show_full_tools
-        && matches!(block.kind, TranscriptKind::Tool)
-        && !is_live_tool_output(block)
-        && block.title.starts_with("ls ✓")
-}
-
 fn is_collapsed_successful_tool_result(block: &TranscriptBlock, show_full_tools: bool) -> bool {
     !show_full_tools
         && matches!(block.kind, TranscriptKind::Tool)
@@ -837,17 +826,19 @@ mod tests {
     }
 
     #[test]
-    fn successful_ls_is_hidden_when_tools_are_collapsed() {
+    fn successful_ls_shows_summary_when_tools_are_collapsed() {
         let transcript = vec![TranscriptBlock {
             kind: TranscriptKind::Tool,
             title: "ls ✓ (call_1)".into(),
             content: "file1\nfile2".into(),
         }];
 
-        let text = rendered_text(&transcript_lines_from(&transcript, false, false));
+        let rendered = transcript_lines_from(&transcript, false, false);
+        let text = rendered_text(&rendered);
 
-        assert!(!text.contains("ls ✓"));
-        assert!(text.contains("Ask a question"));
+        assert_eq!(rendered.len(), 2); // heading plus spacer
+        assert!(text.contains("ls ✓ (call_1) · 2 lines"));
+        assert!(!text.contains("file1\nfile2"));
     }
 
     #[test]
