@@ -15,7 +15,7 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
 
 ### Context Management
 
-- [ ] **Replace message-count trimming with safer context budgeting.** Move away from relying only on `context_message_limit`.
+- [x] **Replace message-count trimming with safer context budgeting.** Move away from relying only on `context_message_limit`.
   - Keep provider-reported token usage when available, but do not rely on returned usage as the only pre-request budgeting mechanism.
   - Preserve valid tool-call structure when compacting context; do not leave orphaned tool result messages.
   - Compact or summarize older tool outputs when needed instead of dropping records blindly.

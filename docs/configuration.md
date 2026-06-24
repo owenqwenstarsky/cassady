@@ -30,7 +30,7 @@ Fields:
 - `default_provider`: optional provider id from `providers.json`. If omitted, Cass infers the provider from `default_model` when possible.
 - `default_model`: optional model id to use by default.
 - `default_access_mode`: `"read-only"` or `"full-access"`.
-- `context_message_limit`: optional number of recent non-system messages sent to the model.
+- `context_message_limit`: optional legacy upper bound for recent non-system messages. Cass primarily budgets context from model metadata (`context_length` and `max_output_tokens`), compacts older tool outputs when needed, and trims only along valid tool-call boundaries.
 - `model_tool_result_limit`: optional max bytes of tool output sent back to the model.
 - `ui_tool_result_limit`: optional max bytes of tool output shown in the UI unless full output is toggled.
 - `show_reasoning`: optional boolean, defaults to `false`. Shows provider-streamed reasoning in the transcript. Reasoning is persisted and sent back in future model context using the provider's reasoning field, such as `reasoning_content` or `reasoning`.
