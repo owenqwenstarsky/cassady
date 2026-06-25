@@ -11,7 +11,7 @@ The project installs two equivalent commands, `cass` and `cassady`; examples use
 - v0.2.6 adds an experimental Rust embedding API for headless sessions; it is useful for early integrations but not yet a stable long-term library contract.
 - Config and conversation state live under `~/.cass`.
 - Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
-- Cassady is not an installer, updater, or package manager.
+- `cass update` can update release-archive installs from official GitHub releases; external package managers should still be updated through their own tools.
 
 ## Install from source
 
@@ -39,6 +39,7 @@ If Cassady cannot resolve a usable provider, model, or API key, it offers to run
 ```sh
 cass setup
 cass check
+cass update --check
 cass
 ```
 
@@ -66,9 +67,10 @@ cass --resume <chat-id>
 cass --resume
 cass check
 cass setup
+cass update
 ```
 
-`cass --resume` without an id lists saved chats for the current directory. When Cassady exits a chat, it prints a resume command for that session.
+`cass --resume` without an id lists saved chats for the current directory. `cass update` checks official GitHub releases and can update both `cass` and `cassady` in the current install directory. When Cassady exits a chat, it prints a resume command for that session.
 
 Common in-chat commands:
 

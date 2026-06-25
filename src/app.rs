@@ -21,6 +21,10 @@ const TOOL_CANCELLED_MESSAGE: &str = "Tool execution cancelled by user.";
 
 pub async fn run() -> Result<()> {
     let mut cli = cli::parse();
+    if let Some(Command::Update(args)) = cli.command.clone() {
+        return crate::update::run(args).await;
+    }
+
     if matches!(cli.command, Some(Command::Check)) {
         let report = crate::check::run(&cli)?;
         print!("{}", report.render());

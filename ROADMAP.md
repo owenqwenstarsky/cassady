@@ -1,5 +1,38 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.7 — Self-Update Command
+
+This release focuses on making Cassady easy to keep current after installation. The goal is to let users run one clean command, `cass update`, to check GitHub releases, choose the recommended prebuilt binary or a source-build fallback, verify what will be installed, and update both `cass` and `cassady` safely. See `plans/V0_2_7_SELF_UPDATE_COMMAND_PLAN.md`.
+
+### Update Command Experience
+
+- [x] **Add a polished `cass update` command.** Check the official Cassady GitHub releases, compare the running version to the selected release, and guide the user through an interactive update flow.
+  - Keep update independent of provider/model setup so it works even when config is missing or invalid.
+  - Support script-friendly checks with flags such as `--check`, `--dry-run`, and `--yes`.
+
+- [x] **Select the right update path.** Prefer a matching prebuilt release archive when available, with explicit `--prebuilt` and `--source` modes for users who want to choose.
+  - Support the same macOS, Linux, and Windows targets used by Cassady releases.
+  - Offer source builds for unsupported targets or users who prefer building locally.
+
+### Safe Installation
+
+- [x] **Verify and stage prebuilt artifacts before replacing binaries.** Download archives and SHA-256 files from the release, verify checksums, extract safely, and validate staged `cass`/`cassady` binaries.
+  - Reject checksum mismatches, unsafe archive paths, missing binaries, and unexpected versions.
+  - Show clear progress and failure messages without dumping raw implementation details.
+
+- [x] **Replace installed binaries cleanly.** Update the current binary and same-directory companion binary when possible, using backups and rollback on failure.
+  - Do not auto-run `sudo` or administrator prompts.
+  - Handle Windows executable replacement with a staged helper or documented manual fallback if necessary.
+
+### Source Build Fallback and Documentation
+
+- [x] **Build from release source when requested.** Download the selected release source, validate its version, check for Rust tooling, run a locked release build, and install the resulting local binaries.
+  - Keep source mode tied to release tags rather than arbitrary branches.
+  - Do not attempt cross-compilation or Rust toolchain installation in this release.
+
+- [x] **Document and test update behavior.** Update README and bundled docs for `cass update`, platform notes, troubleshooting, and package-manager caveats.
+  - Add tests for release parsing, target mapping, asset selection, checksum validation, archive extraction safety, install planning, and mocked update flows.
+
 ## v0.2.6 — Rust Embedding API ✅ Completed
 
 This release focuses on adding the first intentional Rust library surface for embedding Cassady in other Rust projects. The goal is to provide the bones for programmatic, headless agent sessions: configure a workspace, start or resume an agent session, send turns, stream typed events, and handle approvals without launching the TUI. See `plans/V0_2_6_RUST_EMBEDDING_API_PLAN.md`.

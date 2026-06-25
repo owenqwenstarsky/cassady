@@ -16,6 +16,7 @@ pub mod security;
 pub mod setup;
 pub mod tools;
 pub mod ui;
+pub mod update;
 
 pub async fn run() -> anyhow::Result<()> {
     app::run().await

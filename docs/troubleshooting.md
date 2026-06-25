@@ -143,6 +143,29 @@ Likely cause: Windows CRLF line endings or invisible whitespace differences.
 
 Fix: re-read the exact target region and preserve the line endings in `old_text`, or use a smaller unique snippet.
 
+## Update command problems
+
+Symptom: `cass update` cannot complete.
+
+Likely causes and fixes:
+
+- Network or GitHub API failure: retry later or verify proxy/firewall settings.
+- No matching prebuilt archive: use `cass update --source` if you have Rust installed, or download the release archive manually for a supported target.
+- SHA-256 mismatch: do not install the archive. Retry the update; if it repeats, check the GitHub release page before proceeding.
+- Missing Rust toolchain in source mode: install Rust/Cargo yourself, then rerun `cass update --source`. Cassady does not install Rust automatically.
+- Non-writable install directory: update through the original install method, move Cassady to a directory you own, or manually replace the binaries. Cassady does not run `sudo` for you.
+- PATH conflict: `cass update` updates the current executable directory. Run `which cass` / `which cassady` on macOS/Linux or `Get-Command cass` in PowerShell to confirm which binary your shell starts.
+- Windows replacement limitation: if Cassady reports that automatic replacement is unavailable, use the staged file paths it prints and copy them after the running process exits.
+
+Useful checks:
+
+```sh
+cass update --check
+cass update --dry-run
+cass --version
+cassady --version
+```
+
 ## Terminal rendering problems
 
 Symptom: the UI appears garbled or keys do not behave as expected.

@@ -52,9 +52,22 @@ That directory contains `config.json`, `providers.json`, `models.json`, `global.
 ## Non-interactive contexts
 
 - `cass check` is suitable for scripts and CI because it prints text and exits non-zero on errors.
+- `cass update --check` and `cass update --dry-run` are suitable for scripts that only need release status or an install plan.
+- `cass update --yes` accepts default prompts for scripted updates, but still fails instead of escalating privileges when the install directory is not writable.
 - `cass setup` requires an interactive terminal.
 - `cass` chat is an interactive terminal UI.
 
-## Release artifacts
+## Release artifacts and updates
 
-When using release archives, each archive contains both `cass` and `cassady`. Put the extracted binaries somewhere on your `PATH` or run them by explicit path. Cassady itself does not install, update, or manage PATH entries.
+When using release archives, each archive contains both `cass` and `cassady`. Put the extracted binaries somewhere on your `PATH` or run them by explicit path.
+
+`cass update` can update release-archive installs from official GitHub releases. It supports the same prebuilt targets as the release process:
+
+- macOS Apple Silicon: `aarch64-apple-darwin`
+- Linux x86_64: `x86_64-unknown-linux-gnu`
+- Linux ARM64: `aarch64-unknown-linux-gnu`
+- Windows x86_64: `x86_64-pc-windows-gnu`
+
+On macOS and Linux, the updater replaces same-directory `cass` and `cassady` binaries with backups and rollback on failure. On Windows, replacing a running `.exe` is more constrained; if automatic replacement is unavailable, Cassady leaves staged files in place and reports manual copy guidance instead of partially modifying the install.
+
+If Cassady is installed through a package manager in the future, prefer that package manager's update command instead of `cass update`.
