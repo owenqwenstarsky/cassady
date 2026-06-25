@@ -1,0 +1,59 @@
+name: Feature request
+description: Suggest an improvement or new capability for Cassady / cass
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please focus on the user problem and desired outcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what makes it hard today?
+      placeholder: I want to...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the change you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or other designs have you considered?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Terminal UI
+        - Setup and configuration
+        - Providers and models
+        - Tools and file editing
+        - Safety and access modes
+        - Conversation history and resume
+        - Documentation
+        - Packaging and releases
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or mockups
+      description: Add sample commands, UI text, config snippets, screenshots, or links that clarify the request.
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for related requests.
+          required: true
+        - label: This request is in scope for a terminal coding agent, not a general package manager or updater.
+          required: false

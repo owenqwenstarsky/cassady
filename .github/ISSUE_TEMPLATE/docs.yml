@@ -1,0 +1,44 @@
+name: Documentation issue
+description: Report missing, confusing, or incorrect documentation
+title: "docs: "
+labels: [documentation]
+body:
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Link to the page or name the file/section, if known.
+      placeholder: README.md, docs/providers.md, docs/access-modes.md, ...
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What is unclear or incorrect?
+      description: Describe the gap, mistake, or confusing wording.
+    validations:
+      required: true
+  - type: textarea
+    id: suggested
+    attributes:
+      label: Suggested improvement
+      description: If you have specific wording or examples in mind, add them here.
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Blocks installation or first use
+        - Causes incorrect configuration
+        - Confuses normal usage
+        - Typo or small polish
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues for a duplicate.
+          required: true
