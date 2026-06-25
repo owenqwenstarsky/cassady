@@ -1,0 +1,101 @@
+name: Bug report
+description: Report a reproducible problem with Cassady / cass
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail for someone to reproduce it.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Cassady crashes when...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact commands, key presses, or config changes needed to trigger the issue.
+      placeholder: |
+        1. Run `cass ...`
+        2. Press ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Paste errors, logs, or terminal output when useful.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Cassady version
+      description: Output of `cass --version` or `cassady --version`.
+      placeholder: cassady 0.2.x
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install method
+      options:
+        - Release archive
+        - cargo install --git
+        - cargo install --path / local build
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple Silicon
+        - macOS Intel
+        - Linux x86_64
+        - Linux ARM64
+        - Windows x86_64
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Terminal, shell, provider/model, access mode, and anything notable from `cass check`. Do not include API keys.
+      placeholder: |
+        Terminal: ...
+        Shell: ...
+        Provider/model: ...
+        Access mode: ...
+        `cass check`: ...
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Paste sanitized snippets from `~/.cass/config.json`, `providers.json`, or `models.json` if relevant. Remove API keys and secrets.
+      render: json
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I removed API keys, tokens, and other secrets from this report.
+          required: true
+        - label: I searched existing issues for a duplicate.
+          required: true

@@ -1,0 +1,52 @@
+name: Maintenance task
+description: Track internal cleanup, refactoring, testing, CI, or release work
+title: "chore: "
+labels: [maintenance]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should be done, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: List concrete files, modules, or workflows that are in scope.
+      placeholder: |
+        - src/...
+        - tests/...
+        - .github/workflows/...
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Note anything this task should intentionally avoid.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What must be true before this can be closed?
+      placeholder: |
+        - [ ] ...
+        - [ ] `cargo test --locked --all-targets` passes
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Refactoring
+        - Tests
+        - CI
+        - Release process
+        - Dependencies
+        - Documentation maintenance
+        - Other
+    validations:
+      required: true
