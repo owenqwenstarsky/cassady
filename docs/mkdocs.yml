@@ -2,6 +2,8 @@ site_name: Cassady
 site_url: "https://owenqwenstarsky.github.io/cassady/"
 site_description: "Cassady ('cass') is a terminal coding agent written in Rust."
 site_author: Owen Qwen
+docs_dir: .
+site_dir: ../site
 repo_url: https://github.com/owenqwenstarsky/cassady
 repo_name: owenqwenstarsky/cassady
 nav:
