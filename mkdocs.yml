@@ -1,0 +1,8 @@
+site_name: Cassady
+nav:
+  - Home: README.md
+  - Commands: commands.md
+  - Configuration: configuration.md
+  - "Providers & Models": providers.md
+  - "Access & tool safety": access-modes.md
+  - "Rust embedding": embedding.md
