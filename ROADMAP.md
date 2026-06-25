@@ -1,6 +1,47 @@
 # Cassady (Cass) Roadmap
 
-## v0.3.0 — ChatGPT Codex Provider
+## v0.3.2 — Provider Fast Mode
+
+This release focuses on adding a `/fast` command that lets users prefer faster inference when the active provider/model supports it. The first supported provider is `ChatGPT Codex`; other providers can add their own fast-mode request behavior later without changing the user-facing command. See `plans/V0_3_2_FAST_MODE_PLAN.md`.
+
+### Fast Mode Command
+
+- [ ] **Add a persisted `/fast` preference.** Let users toggle fast mode from an idle chat and keep that preference across sessions.
+  - Store the preference in `config.json` without disturbing provider/model configuration.
+  - Keep the preference separate from whether the current provider/model can honor it.
+
+- [ ] **Show capability-aware fast-mode status.** Display fast mode as enabled only when the active provider/model supports it.
+  - If the user switches to an unsupported provider/model, hide the enabled state and report fast mode as unavailable when relevant.
+  - If the user switches back to a supported provider/model, apply the existing preference again.
+
+### Provider Support
+
+- [ ] **Implement ChatGPT Codex fast-mode requests.** Add the provider-specific request option for Codex when fast mode is active.
+  - Verify and test the exact Codex responses request shape during implementation.
+  - Do not send Codex-specific fast-mode fields to OpenAI-compatible providers.
+
+- [ ] **Add extensible provider/model capability metadata.** Model fast-mode support as provider/model metadata so future providers can opt in case by case.
+  - Default unknown and custom providers to unsupported.
+  - Mark built-in ChatGPT Codex model metadata as supported when Cassady can send the fast-mode request.
+
+### Documentation and Validation
+
+- [ ] **Document fast mode behavior and limits.** Update README and bundled docs for `/fast`, `default_fast_mode`, model capability metadata, and Codex-only initial support.
+  - Explain the difference between a saved fast-mode preference and active fast-mode support.
+
+- [ ] **Test fast-mode preference, switching, and provider requests.** Cover command parsing, persistence, status rendering, model/provider switching, and Codex request body behavior.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
+
+## v0.3.1 — Transcript Scroll Stability
+
+This release focuses on keeping the live transcript anchored correctly above the input and footer during long sessions with blank reasoning or tool-output lines.
+
+### TUI Reliability
+
+- [x] **Fix bottom-scroll row counting for whitespace-only lines.** Count indented blank transcript rows the same way Ratatui renders them so accumulated blank rows no longer hide recent transcript content above the footer.
+  - Add regression coverage for whitespace-only wrapped row counting.
+
+## v0.3.0 — ChatGPT Codex Provider ✅ Completed
 
 This release focuses on letting users who are already signed in to Codex with a ChatGPT subscription use that account from Cassady. `ChatGPT Codex` becomes a provider preset that calls the Codex responses endpoint and reads its bearer token from local Codex auth instead of an API-key environment variable. See `plans/V0_3_0_CHATGPT_CODEX_PROVIDER_PLAN.md`.
 
@@ -34,7 +75,7 @@ This release focuses on letting users who are already signed in to Codex with a 
 - [x] **Test Codex auth and provider behavior.** Cover Codex auth fixtures, config validation, setup catalog behavior, provider dispatch, streaming response parsing, tool calls, and secret redaction.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 
-## v0.2.9 — Provider Login Management
+## v0.2.9 — Provider Login Management ✅ Completed
 
 This release focuses on making provider configuration available from both the shell and an active Cassady chat. Users can add or update OpenAI-compatible provider/model settings with `cass login` or `/login`, and remove saved providers and their associated models with `cass logout` or `/logout`. See `plans/V0_2_9_PROVIDER_LOGIN_MANAGEMENT_PLAN.md`.
 
@@ -66,7 +107,7 @@ This release focuses on making provider configuration available from both the sh
 - [x] **Test provider management behavior.** Cover provider/model removal, active default repair, local command parsing, and autocomplete.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 
-## v0.2.8 — Conversation Branch and Restore
+## v0.2.8 — Conversation Branch and Restore ✅ Completed
 
 This release focuses on making conversation recovery safe and explorable. Pressing `Esc` twice while idle opens a branch/restore menu where users can browse prior user messages, assistant messages, and tool calls, create a new branch from a selected checkpoint, and optionally restore Cassady-tracked file edits without destroying the original conversation. See `plans/V0_2_8_CONVERSATION_BRANCH_RESTORE_PLAN.md`.
 
@@ -409,6 +450,13 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
 ## Planned within the next major release
 
 These sections describe work Cassady intends to complete before or as part of the next major release, but which has not yet been assigned to a specific version. Scope, order, and version numbers may change.
+
+### Tool Output Context Reliability
+
+- [ ] **Reduce tool-output compaction stalls.** Make large file reads and command output easier to recover from when output is compacted or truncated, so the assistant can quickly switch to targeted inspection instead of getting stuck.
+  - Prefer smaller, focused file ranges and search-first workflows when large outputs are likely.
+  - Surface clearer guidance when tool results are compacted, including suggested narrower follow-up reads.
+  - Add regression coverage or dogfood checks for workflows where broad reads previously obscured the context needed for safe edits.
 
 ### Windows CLI Usability
 
