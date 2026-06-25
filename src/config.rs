@@ -151,6 +151,34 @@ pub struct Config {
     pub docs_dir: PathBuf,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ConfigOverrides {
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub api_key_env: Option<String>,
+    pub access_mode: Option<AccessMode>,
+}
+
+impl ConfigOverrides {
+    pub fn from_cli(cli: &Cli) -> Self {
+        let access_mode = if cli.readonly {
+            Some(AccessMode::ReadOnly)
+        } else if cli.workspace_edit {
+            Some(AccessMode::WorkspaceEdit)
+        } else if cli.full_access {
+            Some(AccessMode::FullAccess)
+        } else {
+            None
+        };
+        Self {
+            model: cli.model.clone(),
+            base_url: cli.base_url.clone(),
+            api_key_env: cli.api_key_env.clone(),
+            access_mode,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiKeyReference {
     Env(String),
@@ -287,17 +315,29 @@ pub fn models_path(root: &Path) -> PathBuf {
 
 impl Config {
     pub fn load(cli: &Cli) -> Result<Self> {
-        Self::load_from_root(cass_root(), cli)
+        Self::load_with_overrides(cass_root(), ConfigOverrides::from_cli(cli))
     }
 
-    pub fn load_from_root(root: PathBuf, cli: &Cli) -> Result<Self> {
+    pub fn load_with_overrides(root: PathBuf, overrides: ConfigOverrides) -> Result<Self> {
         fs::create_dir_all(root.join("conversations"))
             .with_context(|| format!("creating {}", root.join("conversations").display()))?;
         let docs_dir = crate::docs::install(&root)?;
-        Self::load_from_root_with_docs(root, docs_dir, cli)
+        Self::load_from_root_with_docs_and_overrides(root, docs_dir, overrides)
+    }
+
+    pub fn load_from_root(root: PathBuf, cli: &Cli) -> Result<Self> {
+        Self::load_with_overrides(root, ConfigOverrides::from_cli(cli))
     }
 
     pub fn load_from_root_with_docs(root: PathBuf, docs_dir: PathBuf, cli: &Cli) -> Result<Self> {
+        Self::load_from_root_with_docs_and_overrides(root, docs_dir, ConfigOverrides::from_cli(cli))
+    }
+
+    pub fn load_from_root_with_docs_and_overrides(
+        root: PathBuf,
+        docs_dir: PathBuf,
+        overrides: ConfigOverrides,
+    ) -> Result<Self> {
         fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
         let providers = load_or_create_default_provider_registry(&root)?;
         let models = load_or_create_default_model_registry(&root)?;
@@ -330,19 +370,13 @@ impl Config {
             }
         }
 
-        if cli.readonly {
-            cfg.default_access_mode = AccessMode::ReadOnly;
-        }
-        if cli.workspace_edit {
-            cfg.default_access_mode = AccessMode::WorkspaceEdit;
-        }
-        if cli.full_access {
-            cfg.default_access_mode = AccessMode::FullAccess;
+        if let Some(access_mode) = overrides.access_mode {
+            cfg.default_access_mode = access_mode;
         }
 
-        let requested_model = requested_model(file.as_ref(), cli);
+        let requested_model = requested_model(file.as_ref(), &overrides);
         let provider_id_from_config = requested_provider_id(file.as_ref(), &providers);
-        let legacy = legacy_provider_override(file.as_ref(), cli);
+        let legacy = legacy_provider_override(file.as_ref(), &overrides);
 
         let mut provider = resolve_provider(
             requested_model.as_deref().unwrap_or(DEFAULT_MODEL),
@@ -353,10 +387,10 @@ impl Config {
             &models,
         )?;
 
-        if let Some(base_url) = &cli.base_url {
+        if let Some(base_url) = &overrides.base_url {
             provider.base_url = base_url.clone();
         }
-        if let Some(api_key_env) = &cli.api_key_env {
+        if let Some(api_key_env) = &overrides.api_key_env {
             provider.api_key = format!("${api_key_env}");
         }
 
@@ -706,8 +740,8 @@ pub fn find_model_for_provider<'a>(
         .find(|m| m.provider == provider_id && m.id == model_id)
 }
 
-fn requested_model(file: Option<&ConfigFile>, cli: &Cli) -> Option<String> {
-    cli.model.clone().or_else(|| {
+fn requested_model(file: Option<&ConfigFile>, overrides: &ConfigOverrides) -> Option<String> {
+    overrides.model.clone().or_else(|| {
         file.and_then(|f| {
             f.default_model
                 .clone()
@@ -738,13 +772,13 @@ struct LegacyProviderOverride {
 
 fn legacy_provider_override(
     file: Option<&ConfigFile>,
-    cli: &Cli,
+    overrides: &ConfigOverrides,
 ) -> Option<LegacyProviderOverride> {
-    let base_url = cli
+    let base_url = overrides
         .base_url
         .clone()
         .or_else(|| file.and_then(|f| f.base_url.clone()));
-    let api_key = cli
+    let api_key = overrides
         .api_key_env
         .as_ref()
         .map(|env| format!("${env}"))

@@ -59,6 +59,7 @@ fn expected_bundled_docs_exist() {
         "configuration.md",
         "providers.md",
         "access-modes.md",
+        "embedding.md",
         "workflows.md",
         "troubleshooting.md",
         "platforms.md",

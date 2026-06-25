@@ -1,5 +1,41 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.6 — Rust Embedding API ✅ Completed
+
+This release focuses on adding the first intentional Rust library surface for embedding Cassady in other Rust projects. The goal is to provide the bones for programmatic, headless agent sessions: configure a workspace, start or resume an agent session, send turns, stream typed events, and handle approvals without launching the TUI. See `plans/V0_2_6_RUST_EMBEDDING_API_PLAN.md`.
+
+### Experimental Public API
+
+- [x] **Add a supported embedding module.** Provide a small `cassady::embedding` API with builder, session, turn, event, approval, and error types so callers do not need to stitch together internal modules directly.
+  - Mark the API experimental for v0.2.6 rather than promising long-term semver stability.
+  - Keep existing CLI/TUI behavior unchanged while steering library users toward the new module.
+
+- [x] **Support host-configured agent sessions.** Let Rust callers create or resume headless sessions with explicit cwd, access mode, model/provider overrides, reasoning effort, and Cassady config root.
+  - Reuse existing config files, global instructions, bundled docs, security policy, and JSONL conversation storage.
+  - Avoid requiring callers to construct CLI-specific types.
+
+### Headless Turn Execution
+
+- [x] **Run agent turns programmatically.** Add a Tokio-native API for sending one user message, streaming assistant/tool/status events, and returning the updated session or conversation state.
+  - Prevent or clearly reject overlapping turns unless the type design makes them impossible.
+  - Preserve provider streaming, tool execution, prompt generation, and context behavior from the existing agent loop.
+
+- [x] **Expose approval handling to host applications.** Allow embedded callers to approve or deny tool approval requests, especially shell commands in `workspace-edit` mode.
+  - Include request id, tool call id, tool name, arguments, and reason in approval events.
+  - Document cancellation/drop behavior for active turns.
+
+### Documentation and Validation
+
+- [x] **Add a minimal headless example.** Include a compilable Rust example that imports Cassady, starts a session, sends a prompt, and prints streamed assistant output.
+  - Note that a configured OpenAI-compatible provider and API key are still required.
+  - Show where to handle approval requests even if the first example defaults to `read-only`.
+
+- [x] **Document the experimental Rust API.** Add bundled docs and README links for setup requirements, basic usage, event handling, approvals, limitations, and current non-goals.
+  - Make clear that multi-agent orchestration, custom providers, custom tools, daemons, and stable plugin APIs are deferred.
+
+- [x] **Test embedding without a terminal.** Add integration tests that use temporary config/conversation roots and mock provider responses to verify session creation, turn streaming, resume, approval flow, and access-mode behavior.
+  - Ensure `cargo test --locked --all-targets` covers the new public API and examples.
+
 ## v0.2.4 — System Prompt Refinement
 
 This release focuses on making Cassady's system prompt clearer, more intuitive, and more useful for everyday coding work without letting it become bulky. The target is a well-structured prompt around 1,000 tokens that gives the model enough product context, safety expectations, and workflow guidance to behave consistently across read-only, workspace-edit, and full-access sessions. See `plans/V0_2_4_SYSTEM_PROMPT_REFINEMENT_PLAN.md`.

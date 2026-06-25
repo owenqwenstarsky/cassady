@@ -8,6 +8,7 @@ The project installs two equivalent commands, `cass` and `cassady`; examples use
 
 - Provider support is OpenAI-compatible chat/completions APIs only.
 - The primary interface is an interactive terminal UI.
+- v0.2.6 adds an experimental Rust embedding API for headless sessions; it is useful for early integrations but not yet a stable long-term library contract.
 - Config and conversation state live under `~/.cass`.
 - Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
 - Cassady is not an installer, updater, or package manager.
@@ -112,12 +113,29 @@ API key references should usually be written as environment variables such as `"
 
 Detailed bundled docs live in this repository under [`docs/`](docs/README.md) and are installed to `~/.cass/docs` at runtime.
 
+## Experimental Rust embedding API
+
+Rust applications can import Cassady and run headless sessions without launching the TUI:
+
+```rust
+use cassady::prelude::*;
+
+let session = SessionBuilder::new()
+    .cwd(".")
+    .access_mode(AccessMode::ReadOnly)
+    .build()
+    .await?;
+```
+
+See [Experimental Rust embedding API](docs/embedding.md) for session creation, streamed events, approval handling, cancellation, and current limitations.
+
 ## More documentation
 
 - [Commands](docs/commands.md)
 - [Configuration](docs/configuration.md)
 - [Providers and models](docs/providers.md)
 - [Access modes and tool safety](docs/access-modes.md)
+- [Experimental Rust embedding API](docs/embedding.md)
 - [Workflows](docs/workflows.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Platform notes](docs/platforms.md)
