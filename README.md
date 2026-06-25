@@ -1,12 +1,12 @@
 # Cassady / Cass
 
-Cassady (`cass`) is a terminal coding agent written in Rust. It runs an interactive chat in your project, can inspect files, apply exact edits, run shell commands when the active safety mode allows them, and persist sessions for later resume. Cassady currently talks to OpenAI-compatible providers.
+Cassady (`cass`) is a terminal coding agent written in Rust. It runs an interactive chat in your project, can inspect files, apply exact edits, run shell commands when the active safety mode allows them, and persist sessions for later resume. Cassady talks to OpenAI-compatible providers and a built-in ChatGPT Codex provider preset.
 
 The project installs two equivalent commands, `cass` and `cassady`; examples use `cass`.
 
 ## Current scope and limitations
 
-- Provider support is OpenAI-compatible chat/completions APIs only.
+- Provider support includes OpenAI-compatible chat/completions APIs plus the `ChatGPT Codex` preset for users already signed in to Codex.
 - The primary interface is an interactive terminal UI.
 - v0.2.6 adds an experimental Rust embedding API for headless sessions; it is useful for early integrations but not yet a stable long-term library contract.
 - Config and conversation state live under `~/.cass`.
@@ -44,7 +44,7 @@ cass update --check
 cass
 ```
 
-The setup wizard lets you choose one or more OpenAI-compatible providers, enter the API key environment-variable name, discover models from `GET /models` when the key is available, or enter a model id manually.
+The setup wizard lets you choose one or more providers. OpenAI-compatible providers use an API key environment variable and can discover models from `GET /models` when the key is available. `ChatGPT Codex` uses your existing local Codex login (`~/.codex/auth.json`) and the Codex responses endpoint instead of a Cassady API-key environment variable.
 
 Set your provider key in the shell where you run Cassady. For example, on macOS/Linux:
 
@@ -123,7 +123,7 @@ Cassady stores user-editable files in `~/.cass`:
 - `global.md`: optional global instructions added to new chat system prompts when they fit the active request; they cannot override access modes, tool denials, approvals, or workspace boundaries.
 - `docs/`: bundled documentation installed from the current binary.
 
-API key references should usually be written as environment variables such as `"$OPENAI_API_KEY"`.
+API key references should usually be written as environment variables such as `"$OPENAI_API_KEY"`. The `ChatGPT Codex` provider is different: it stores no key in `~/.cass` and reads the bearer token from local Codex auth at check/request time.
 
 Detailed bundled docs live in this repository under [`docs/`](docs/README.md) and are installed to `~/.cass/docs` at runtime.
 

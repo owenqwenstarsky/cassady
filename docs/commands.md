@@ -35,7 +35,7 @@ Resume this chat with: cass --resume <id>
 
 - `--resume [CHAT_ID]`: resume a chat, or list chats for the current cwd when no id is provided.
 - `--model MODEL`: use `MODEL` for this session.
-- `--base-url URL`: override the active provider's OpenAI-compatible base URL for this session.
+- `--base-url URL`: override the active provider's base URL or endpoint for this session.
 - `--api-key-env ENV`: read the API key from environment variable `ENV` for this session.
 - `--cwd PATH`: use `PATH` as the launch cwd and workspace root.
 - `--readonly`: force read-only mode.
@@ -56,15 +56,15 @@ Validates Cassady configuration under `~/.cass`:
 - duplicate provider/model ids.
 - model/provider references.
 - active provider and model resolution.
-- active API key availability.
+- active authentication availability.
 
-Missing API keys for inactive providers are warnings. A missing active API key is an error and `cass check` exits with a non-zero status.
+Missing API keys for inactive OpenAI-compatible providers are warnings. A missing active API key is an error. For `ChatGPT Codex`, missing or expired local Codex auth is an error when it is active. `cass check` exits with a non-zero status when errors are present.
 
 ### `cass login`
 
-Runs the provider login/configuration wizard. This is the same provider setup flow used by `cass setup`, framed for adding or updating saved OpenAI-compatible provider access. It can configure multiple providers, discover or manually enter models, update active defaults, and validate the saved files.
+Runs the provider login/configuration wizard. This is the same provider setup flow used by `cass setup`, framed for adding or updating saved provider access. It can configure multiple providers, discover or manually enter models, update active defaults, and validate the saved files.
 
-`cass login` edits Cassady files under `~/.cass`; it does not sign in through a browser or create provider accounts.
+`cass login` edits Cassady files under `~/.cass`; it does not create provider accounts. For `ChatGPT Codex`, sign in with `codex login` or the Codex app first; Cassady then uses local Codex auth instead of storing an API key.
 
 ### `cass logout`
 
@@ -74,7 +74,7 @@ Opens an interactive menu for removing saved providers from Cassady config. Remo
 
 ### `cass setup`
 
-Runs the interactive setup wizard in a terminal. It configures OpenAI-compatible providers, API key environment-variable references, and first models. It updates `config.json`, `providers.json`, and `models.json` while preserving unrelated entries where possible.
+Runs the interactive setup wizard in a terminal. It configures providers, authentication sources, and first models. OpenAI-compatible providers use API key environment-variable references; `ChatGPT Codex` uses local Codex auth. It updates `config.json`, `providers.json`, and `models.json` while preserving unrelated entries where possible.
 
 ### `cass update`
 

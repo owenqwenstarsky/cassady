@@ -4,6 +4,7 @@ pub mod app;
 pub mod branch;
 pub mod check;
 pub mod cli;
+pub mod codex_auth;
 pub mod config;
 pub mod conversation;
 pub mod docs;

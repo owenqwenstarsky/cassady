@@ -1,5 +1,9 @@
 use crate::cli::Cli;
-use crate::config::{self, ApiKeyReference, Config, ModelsFile, ProvidersFile};
+use crate::codex_auth;
+use crate::config::{
+    self, ApiKeyReference, Config, ModelsFile, ProvidersFile, CHATGPT_CODEX_PROVIDER_KIND,
+    DEFAULT_PROVIDER_KIND,
+};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,6 +75,9 @@ impl CheckReport {
                     "cass check".into(),
                     "cass".into(),
                 ];
+            }
+            if error.contains("Codex auth") {
+                return vec!["codex login".into(), "cass check".into(), "cass".into()];
             }
         }
         vec!["cass setup".into()]
@@ -191,26 +198,80 @@ fn check_active_config(report: &mut CheckReport, cfg: &Config, providers: &Provi
     report
         .successes
         .push(format!("active provider: {}", cfg.provider_id));
+    let endpoint_label = if cfg.active_provider.kind == CHATGPT_CODEX_PROVIDER_KIND {
+        "active provider endpoint"
+    } else {
+        "active provider base URL"
+    };
     report.successes.push(format!(
-        "active provider base URL: {}",
+        "{endpoint_label}: {}",
         cfg.active_provider.base_url
     ));
     report
         .successes
         .push(format!("active model: {}", cfg.model));
 
-    check_api_key(report, "api key", &cfg.active_provider.api_key, true);
+    check_provider_auth(
+        report,
+        "api key",
+        &cfg.active_provider.kind,
+        &cfg.active_provider.api_key,
+        true,
+    );
 
     for provider in &providers.providers {
         if provider.id == cfg.provider_id {
             continue;
         }
-        check_api_key(
+        check_provider_auth(
             report,
             &format!("provider `{}` api key", provider.id),
+            &provider.kind,
             &provider.api_key,
             false,
         );
+    }
+}
+
+fn check_provider_auth(
+    report: &mut CheckReport,
+    label: &str,
+    kind: &str,
+    api_key: &str,
+    active: bool,
+) {
+    match kind {
+        DEFAULT_PROVIDER_KIND => check_api_key(report, label, api_key, active),
+        CHATGPT_CODEX_PROVIDER_KIND => check_codex_auth(report, active),
+        _ if active => report
+            .errors
+            .push(format!("provider kind `{kind}` is unsupported")),
+        _ => report
+            .warnings
+            .push(format!("provider kind `{kind}` is unsupported")),
+    }
+}
+
+fn check_codex_auth(report: &mut CheckReport, active: bool) {
+    let status = codex_auth::check_codex_auth();
+    if status.is_usable() {
+        if active {
+            report
+                .successes
+                .push(format!("Codex auth: {}", status.summary()));
+        }
+    } else if active {
+        report.errors.push(format!(
+            "Codex auth: {}. {}",
+            status.summary(),
+            status.recovery_hint()
+        ));
+    } else {
+        report.warnings.push(format!(
+            "Codex auth: {}. {}",
+            status.summary(),
+            status.recovery_hint()
+        ));
     }
 }
 

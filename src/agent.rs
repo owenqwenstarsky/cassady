@@ -2,8 +2,8 @@ use crate::access::AccessMode;
 use crate::config::{Config, ReasoningEffort};
 use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
-use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
 use crate::providers::types::ModelMessage;
+use crate::providers::ProviderClient;
 use crate::security::PolicyDecision;
 use crate::tools::{self, ToolContext, ToolRuntimeEvent};
 use anyhow::Result;
@@ -85,34 +85,21 @@ pub async fn run_turn_with_commands(
         ts: now_ts(),
     })?;
 
-    let api_key = match settings.config.resolved_api_key() {
-        Ok(api_key) => api_key,
+    let reasoning_effort = settings
+        .reasoning_effort
+        .clamp_for_model(settings.config.model_metadata.as_ref());
+    let provider = match ProviderClient::from_config(&settings.config, reasoning_effort) {
+        Ok(provider) => provider,
         Err(err) => {
             append_visible_assistant(
                 &mut conversation,
                 &tx,
-                format!("I couldn't start the turn because the API key is not available: {err}"),
+                format!("I couldn't start the turn because provider authentication is not available: {err}"),
             )?;
             let _ = tx.send(AgentEvent::TurnFinished);
             return Ok(conversation);
         }
     };
-    let reasoning_request_format = settings
-        .config
-        .model_metadata
-        .as_ref()
-        .map(|model| model.reasoning.request_format)
-        .unwrap_or_default();
-    let reasoning_effort = settings
-        .reasoning_effort
-        .clamp_for_model(settings.config.model_metadata.as_ref());
-    let provider = OpenAiCompatibleProvider::new(OpenAiCompatibleSettings {
-        model: settings.config.model.clone(),
-        base_url: settings.config.active_provider.base_url.clone(),
-        api_key,
-        reasoning_effort,
-        reasoning_request_format,
-    });
 
     let docs_dir = settings.config.docs_dir();
     let tool_ctx = ToolContext {

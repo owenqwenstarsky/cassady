@@ -1,8 +1,11 @@
 use crate::check;
 use crate::cli::Cli;
+use crate::codex_auth;
 use crate::config::{
     self, ConfigFile, ModelDefinition, ModelsFile, ProviderDefinition, ProvidersFile,
-    ReasoningEffort, ReasoningMetadata, ReasoningRequestFormat, DEFAULT_PROVIDER_KIND,
+    ReasoningEffort, ReasoningMetadata, ReasoningRequestFormat, CHATGPT_CODEX_DEFAULT_MODEL,
+    CHATGPT_CODEX_PROVIDER_ID, CHATGPT_CODEX_PROVIDER_KIND, CHATGPT_CODEX_PROVIDER_NAME,
+    CHATGPT_CODEX_RESPONSES_URL, DEFAULT_PROVIDER_KIND,
 };
 use crate::menu::{Menu, MenuItem, TextPrompt};
 use anyhow::{bail, Context, Result};
@@ -75,14 +78,12 @@ struct ModelItem {
 
 fn print_banner() {
     println!("Cassady setup");
-    println!("Configure an OpenAI-compatible provider, API key environment variable, and model.");
+    println!("Configure a provider, authentication source, and model.");
 }
 
 fn print_login_banner() {
     println!("Cassady login");
-    println!(
-        "Add or update an OpenAI-compatible provider, API key environment variable, and model."
-    );
+    println!("Add or update a provider, authentication source, and model.");
 }
 
 fn section(title: &str) {
@@ -149,6 +150,12 @@ pub fn provider_catalog() -> Vec<ProviderCatalogEntry> {
             id: "openai",
             base_url: "https://api.openai.com/v1",
             api_key_env: "OPENAI_API_KEY",
+        },
+        ProviderCatalogEntry {
+            name: CHATGPT_CODEX_PROVIDER_NAME,
+            id: CHATGPT_CODEX_PROVIDER_ID,
+            base_url: CHATGPT_CODEX_RESPONSES_URL,
+            api_key_env: "",
         },
         ProviderCatalogEntry {
             name: "xAI",
@@ -265,7 +272,7 @@ pub async fn run(cli: &Cli, mode: SetupMode) -> Result<SetupOutcome> {
 
     let report = check::run(cli)?;
     if report.has_errors() {
-        if std::env::var(&active_api_key_env).is_err() {
+        if !active_api_key_env.is_empty() && std::env::var(&active_api_key_env).is_err() {
             section(match mode {
                 SetupMode::Login => "Login saved",
                 _ => "Setup saved",
@@ -476,24 +483,39 @@ async fn configure_provider(
     key_value("id", &provider.id);
     key_value("endpoint", &provider.base_url);
 
-    let api_key_env = ask_default("API key environment variable", &provider.api_key_env)?;
-    if !looks_like_env_var(&api_key_env) {
-        warn(format!(
-            "`{api_key_env}` is an unusual environment variable name. Continuing."
-        ));
-    }
-    let api_key = match std::env::var(&api_key_env) {
-        Ok(value) if !value.is_empty() => {
-            success(format!("{api_key_env} is set"));
-            Some(value)
+    let (api_key_env, api_key) = if is_chatgpt_codex_provider(&provider.id) {
+        info(
+            "ChatGPT Codex uses your local Codex login instead of an API-key environment variable.",
+        );
+        let status = codex_auth::check_codex_auth();
+        if status.is_usable() {
+            success(format!("Codex auth: {}", status.summary()));
+        } else {
+            warn(format!("Codex auth: {}", status.summary()));
+            hint(status.recovery_hint());
         }
-        _ => {
+        (String::new(), None)
+    } else {
+        let api_key_env = ask_default("API key environment variable", &provider.api_key_env)?;
+        if !looks_like_env_var(&api_key_env) {
             warn(format!(
-                "{api_key_env} is not set in this shell. Setup can still be saved."
+                "`{api_key_env}` is an unusual environment variable name. Continuing."
             ));
-            hint(format!("Later, run: export {api_key_env}=..."));
-            None
         }
+        let api_key = match std::env::var(&api_key_env) {
+            Ok(value) if !value.is_empty() => {
+                success(format!("{api_key_env} is set"));
+                Some(value)
+            }
+            _ => {
+                warn(format!(
+                    "{api_key_env} is not set in this shell. Setup can still be saved."
+                ));
+                hint(format!("Later, run: export {api_key_env}=..."));
+                None
+            }
+        };
+        (api_key_env, api_key)
     };
 
     let model_id = choose_model(&provider, api_key.as_deref()).await?;
@@ -555,6 +577,15 @@ fn choose_active_provider(selections: &[SetupSelection]) -> Result<usize> {
 
 async fn choose_model(provider: &ChosenProvider, api_key: Option<&str>) -> Result<String> {
     section("Model");
+
+    if is_chatgpt_codex_provider(&provider.id) {
+        if let Some(model) = codex_auth::read_codex_default_model() {
+            success(format!("Found Codex default model: {model}"));
+            return ask_default("Model id", &model);
+        }
+        warn("Could not find a model in local Codex config. Using a safe default; edit it if needed.");
+        return ask_default("Model id", CHATGPT_CODEX_DEFAULT_MODEL);
+    }
 
     let Some(api_key) = api_key else {
         warn("Model discovery was skipped because the API key is not available in this shell.");
@@ -670,7 +701,9 @@ pub fn apply_setups(root: &Path, selections: &[SetupSelection], active_index: us
     for selection in selections {
         validate_provider_id(&selection.provider_id)?;
         validate_base_url(&selection.base_url)?;
-        if selection.api_key_env.trim().is_empty() {
+        if !is_chatgpt_codex_provider(&selection.provider_id)
+            && selection.api_key_env.trim().is_empty()
+        {
             bail!("API key environment variable must not be empty");
         }
         if selection.model_id.trim().is_empty() {
@@ -883,12 +916,21 @@ fn model_belongs_to_provider(models: &ModelsFile, provider_id: &str, model_id: &
 }
 
 fn upsert_provider(providers: &mut ProvidersFile, selection: &SetupSelection) {
+    let is_codex = is_chatgpt_codex_provider(&selection.provider_id);
     let new_entry = ProviderDefinition {
         id: selection.provider_id.clone(),
         name: Some(selection.provider_name.clone()),
-        kind: DEFAULT_PROVIDER_KIND.to_string(),
+        kind: if is_codex {
+            CHATGPT_CODEX_PROVIDER_KIND.to_string()
+        } else {
+            DEFAULT_PROVIDER_KIND.to_string()
+        },
         base_url: selection.base_url.clone(),
-        api_key: format!("${}", selection.api_key_env),
+        api_key: if is_codex {
+            String::new()
+        } else {
+            format!("${}", selection.api_key_env)
+        },
         default_model: Some(selection.model_id.clone()),
         models: vec![selection.model_id.clone()],
     };
@@ -979,6 +1021,10 @@ fn validate_base_url(base_url: &str) -> Result<()> {
         "http" | "https" => Ok(()),
         other => bail!("base URL must use http or https, not `{other}`"),
     }
+}
+
+fn is_chatgpt_codex_provider(id: &str) -> bool {
+    id == CHATGPT_CODEX_PROVIDER_ID
 }
 
 fn looks_like_env_var(value: &str) -> bool {

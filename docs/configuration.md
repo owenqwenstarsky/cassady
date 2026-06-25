@@ -19,7 +19,7 @@ Run:
 cass setup
 ```
 
-Cassady also offers setup automatically when `cass` cannot resolve a usable active provider, model, or API key before starting a chat.
+Cassady also offers setup automatically when `cass` cannot resolve a usable active provider, model, or authentication source before starting a chat.
 
 For everyday provider management, `cass login` opens the same provider configuration flow with login-oriented wording. Inside an idle chat, `/login` temporarily opens that flow and reloads the active provider/model after it closes.
 
@@ -27,9 +27,9 @@ To remove saved provider configuration, run `cass logout` or type `/logout` whil
 
 The wizard uses keyboard prompts: `↑`/`↓` moves through choices, `Space` selects providers in the multi-select screen, and `Enter` submits. Text fields use the same prompt style instead of falling back to plain line input.
 
-The wizard supports configuring multiple OpenAI-compatible providers at once. If more than one provider is configured, setup asks which one should be active first. If the selected API key environment variable is set, Cassady tries to fetch models from `GET {base_url}/models` and lets you choose one. If discovery fails, it offers a retry before falling back to manual model entry. If the API key is not set, setup asks for a model id manually.
+The wizard supports configuring multiple providers at once. If more than one provider is configured, setup asks which one should be active first. For OpenAI-compatible providers, if the selected API key environment variable is set, Cassady tries to fetch models from `GET {base_url}/models` and lets you choose one. If discovery fails, it offers a retry before falling back to manual model entry. If the API key is not set, setup asks for a model id manually. For `ChatGPT Codex`, setup skips API-key prompts and reads model defaults from local Codex config when available.
 
-Setup stores API keys as environment-variable references such as `"$OPENAI_API_KEY"` by default. After setup, Cassady writes/updates `config.json`, `providers.json`, and `models.json`, validates them, and starts a chat only when the active API key is available in the current shell.
+Setup stores API keys as environment-variable references such as `"$OPENAI_API_KEY"` by default for OpenAI-compatible providers. `ChatGPT Codex` stores no API key in `~/.cass`; it reads local Codex auth at check/request time. After setup, Cassady writes/updates `config.json`, `providers.json`, and `models.json`, validates them, and starts a chat only when the active authentication source is available.
 
 ## `config.json`
 
@@ -89,13 +89,32 @@ Fields:
 
 - `id`: required unique provider id.
 - `name`: optional display name.
-- `kind`: required provider kind. Currently only `"openai-compatible"` is supported.
-- `base_url`: required OpenAI-compatible API base URL.
-- `api_key`: required string. Use either a literal key or an environment-variable reference like `"$OPENAI_API_KEY"`.
+- `kind`: required provider kind. Supported values are `"openai-compatible"` and `"chatgpt-codex"`.
+- `base_url`: required API base URL or endpoint. `chatgpt-codex` uses `https://chatgpt.com/backend-api/codex/responses`.
+- `api_key`: required for `openai-compatible` providers. Use either a literal key or an environment-variable reference like `"$OPENAI_API_KEY"`. Omit it for `chatgpt-codex`; that provider reads local Codex auth instead.
 - `default_model`: optional model id used when no default model is configured.
 - `models`: optional list of model ids associated with this provider.
 
 Only strings that start with `$` are resolved as environment variables. Cassady does not expand partial strings or `${NAME}` syntax.
+
+`ChatGPT Codex` example:
+
+```json
+{
+  "providers": [
+    {
+      "id": "chatgpt-codex",
+      "name": "ChatGPT Codex",
+      "kind": "chatgpt-codex",
+      "base_url": "https://chatgpt.com/backend-api/codex/responses",
+      "default_model": "gpt-5.5",
+      "models": ["gpt-5.5"]
+    }
+  ]
+}
+```
+
+Run `codex login` or sign in with the Codex app before using this provider. Cassady reads `$CODEX_HOME/auth.json` or `~/.codex/auth.json` and does not store the Codex access token in `~/.cass`.
 
 ## `models.json`
 
@@ -158,7 +177,7 @@ Run:
 cass check
 ```
 
-This validates JSON syntax, expected schema, duplicate provider/model ids, model/provider references, active provider/model resolution, and API key environment-variable availability. Missing API keys for inactive providers are warnings; a missing active provider API key is an error.
+This validates JSON syntax, expected schema, duplicate provider/model ids, model/provider references, active provider/model resolution, and authentication availability. Missing API keys for inactive OpenAI-compatible providers are warnings; a missing active provider API key is an error. For `ChatGPT Codex`, missing or expired local Codex auth is an active-provider error.
 
 When setup is incomplete, `cass check` prints actionable next steps such as:
 
@@ -172,7 +191,7 @@ cass
 
 1. Edit one file at a time.
 2. Keep provider ids and model provider references in sync.
-3. Prefer API key env references over literal keys.
+3. Prefer API key env references over literal keys for OpenAI-compatible providers; do not paste Codex tokens into Cassady config.
 4. Prefer `cass login` and `cass logout` for routine provider changes.
 5. Run `cass check` before starting a chat.
 

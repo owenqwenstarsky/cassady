@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Use `cass check` first for configuration problems. It validates files, provider/model references, and API key availability.
+Use `cass check` first for configuration problems. It validates files, provider/model references, and authentication availability.
 
 ## Missing active API key
 
@@ -24,6 +24,22 @@ cass check
 cass
 ```
 
+## Missing or expired ChatGPT Codex auth
+
+Symptom: `cass check` reports `Codex auth` errors, or chat startup says provider authentication is not available for `chatgpt-codex`.
+
+Likely cause: `ChatGPT Codex` is active but `$CODEX_HOME/auth.json` or `~/.codex/auth.json` is missing, unreadable, lacks `tokens.access_token`, or contains an expired token.
+
+Fix:
+
+```sh
+codex login
+cass check
+cass
+```
+
+You can also sign in with the Codex app if that is how your local Codex auth is managed. Cassady does not refresh or store ChatGPT/Codex tokens; it reads local Codex auth at check/request time and redacts secret values.
+
 ## Invalid API key reference
 
 Symptom: the key is not resolved the way you expect.
@@ -45,9 +61,10 @@ Likely causes:
 - wrong `base_url`;
 - network or proxy problem;
 - provider outage;
-- provider requires a different OpenAI-compatible path.
+- provider requires a different OpenAI-compatible path;
+- for `ChatGPT Codex`, the private ChatGPT backend endpoint changed or the selected model is unavailable.
 
-Fix: verify the base URL in `providers.json`, retry setup, or enter the model id manually if only `/models` discovery is failing.
+Fix: verify the base URL in `providers.json`, retry setup, or enter the model id manually if only `/models` discovery is failing. For `ChatGPT Codex`, verify that `base_url` is `https://chatgpt.com/backend-api/codex/responses`, rerun `codex login`, and try a current Codex model id.
 
 ## `/models` discovery fails
 
@@ -75,9 +92,9 @@ Then verify with a small prompt.
 
 Symptom: the assistant says the provider returned an error.
 
-Likely cause: provider-side authentication, quota, billing, or rate limit.
+Likely cause: provider-side authentication, quota, billing, or rate limit. For `ChatGPT Codex`, this can also mean your ChatGPT subscription/account does not have the requested Codex model available or the local Codex token needs to be refreshed by Codex.
 
-Fix: confirm the API key, provider account status, selected model, and provider dashboard. Cassady forwards provider failures into the chat but cannot resolve account-level issues.
+Fix: confirm the API key, provider account status, selected model, and provider dashboard. For `ChatGPT Codex`, rerun `codex login` or open Codex to refresh local auth. Cassady forwards provider failures into the chat but cannot resolve account-level issues.
 
 ## Invalid JSON or unknown config fields
 

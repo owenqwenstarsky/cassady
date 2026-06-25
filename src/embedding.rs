@@ -157,7 +157,7 @@ impl SessionBuilder {
             access_mode: self.access_mode,
         };
         let config = Config::load_with_overrides(root, overrides).map_err(Error::config)?;
-        config.resolved_api_key().map_err(Error::config)?;
+        config.ensure_provider_auth().map_err(Error::config)?;
         let cwd = resolve_cwd(self.cwd).map_err(Error::config)?;
         let mode = config.default_access_mode;
         let reasoning_effort = self

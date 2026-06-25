@@ -83,7 +83,9 @@ Inside an idle chat:
 /logout
 ```
 
-Logout removes selected providers from Cassady's config and removes their associated model entries. It does not delete environment variables or external provider accounts.
+Logout removes selected providers from Cassady's config and removes their associated model entries. It does not delete environment variables, local Codex auth, or external provider accounts.
+
+For `ChatGPT Codex`, run `codex login` or sign in with the Codex app before `cass login`. Cassady validates `~/.codex/auth.json` and uses that local token source instead of asking for an API-key environment variable.
 
 ## Switch model
 
@@ -166,4 +168,4 @@ Config files live under `~/.cass`, outside a normal project workspace. To inspec
 cass check
 ```
 
-Prefer `cass setup` for provider/model changes when possible.
+For OpenAI-compatible providers this checks API key environment variables. For `ChatGPT Codex` this checks local Codex auth and points you back to `codex login` if the token is missing or expired. Prefer `cass setup` or `cass login` for provider/model changes when possible.

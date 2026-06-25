@@ -80,7 +80,7 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    if config.resolved_api_key().is_err() {
+    if config.ensure_provider_auth().is_err() {
         let outcome = crate::setup::run(&cli, crate::setup::SetupMode::Auto).await?;
         if !outcome.start_session {
             return Ok(());

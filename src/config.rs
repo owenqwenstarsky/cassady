@@ -9,6 +9,11 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_PROVIDER_ID: &str = "fireworks";
 pub const DEFAULT_PROVIDER_NAME: &str = "Fireworks";
 pub const DEFAULT_PROVIDER_KIND: &str = "openai-compatible";
+pub const CHATGPT_CODEX_PROVIDER_ID: &str = "chatgpt-codex";
+pub const CHATGPT_CODEX_PROVIDER_NAME: &str = "ChatGPT Codex";
+pub const CHATGPT_CODEX_PROVIDER_KIND: &str = "chatgpt-codex";
+pub const CHATGPT_CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
+pub const CHATGPT_CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
 pub const DEFAULT_MODEL: &str = "accounts/fireworks/models/qwen3p7-plus";
 pub const DEFAULT_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
 pub const DEFAULT_API_KEY_ENV: &str = "FIREWORKS_API_KEY";
@@ -61,6 +66,7 @@ pub struct ProviderDefinition {
     pub name: Option<String>,
     pub kind: String,
     pub base_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
@@ -128,7 +134,7 @@ pub struct ResolvedProviderConfig {
     pub name: Option<String>,
     pub kind: String,
     pub base_url: String,
-    /// Either a literal API key or an env-var reference like "$FIREWORKS_API_KEY".
+    /// Either a literal API key, an env-var reference like "$FIREWORKS_API_KEY", or empty for provider kinds that use external local auth.
     pub api_key: String,
     pub default_model: Option<String>,
     pub models: Vec<String>,
@@ -429,6 +435,14 @@ impl Config {
     pub fn resolved_api_key(&self) -> Result<String> {
         resolve_api_key(&self.active_provider.api_key)
     }
+
+    pub fn ensure_provider_auth(&self) -> Result<()> {
+        match self.active_provider.kind.as_str() {
+            DEFAULT_PROVIDER_KIND => self.resolved_api_key().map(|_| ()),
+            CHATGPT_CODEX_PROVIDER_KIND => crate::codex_auth::load_codex_access_token().map(|_| ()),
+            kind => bail!("unsupported provider kind `{kind}`"),
+        }
+    }
 }
 
 impl ProviderDefinition {
@@ -535,6 +549,10 @@ pub fn api_key_reference(spec: &str) -> Result<ApiKeyReference> {
     Ok(ApiKeyReference::Literal)
 }
 
+pub fn is_supported_provider_kind(kind: &str) -> bool {
+    matches!(kind, DEFAULT_PROVIDER_KIND | CHATGPT_CODEX_PROVIDER_KIND)
+}
+
 pub fn resolve_api_key(spec: &str) -> Result<String> {
     match api_key_reference(spec)? {
         ApiKeyReference::Env(name) => {
@@ -576,7 +594,7 @@ pub fn validate_registries(
                 "providers.json: provider `{}` kind must not be empty",
                 provider.id
             ));
-        } else if provider.kind != DEFAULT_PROVIDER_KIND {
+        } else if !is_supported_provider_kind(&provider.kind) {
             out.errors.push(format!(
                 "providers.json: provider `{}` uses unsupported kind `{}`",
                 provider.id, provider.kind
@@ -593,9 +611,18 @@ pub fn validate_registries(
                 provider.id
             ));
         }
-        if let Err(err) = api_key_reference(&provider.api_key) {
-            out.errors.push(format!(
-                "providers.json: provider `{}` has invalid api_key: {err}",
+        if provider.kind == DEFAULT_PROVIDER_KIND {
+            if let Err(err) = api_key_reference(&provider.api_key) {
+                out.errors.push(format!(
+                    "providers.json: provider `{}` has invalid api_key: {err}",
+                    provider.id
+                ));
+            }
+        } else if provider.kind == CHATGPT_CODEX_PROVIDER_KIND
+            && !provider.api_key.trim().is_empty()
+        {
+            out.warnings.push(format!(
+                "providers.json: provider `{}` ignores api_key because ChatGPT Codex uses local Codex auth",
                 provider.id
             ));
         }

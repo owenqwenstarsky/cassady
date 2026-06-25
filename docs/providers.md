@@ -1,14 +1,15 @@
 # Providers and models
 
-Cassady currently supports OpenAI-compatible providers. A provider supplies the base URL and API key; a model entry supplies metadata for one model id used with that provider.
+Cassady supports OpenAI-compatible providers plus a built-in `ChatGPT Codex` provider preset. A provider supplies the endpoint and authentication source; a model entry supplies metadata for one model id used with that provider.
 
 ## Built-in setup catalog
 
 The setup wizard offers these provider templates:
 
-| Provider | Provider id | Base URL | Suggested API key env var |
+| Provider | Provider id | Base URL / endpoint | Suggested auth source |
 | --- | --- | --- | --- |
 | OpenAI | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| ChatGPT Codex | `chatgpt-codex` | `https://chatgpt.com/backend-api/codex/responses` | local Codex auth |
 | xAI | `xai` | `https://api.x.ai/v1` | `XAI_API_KEY` |
 | Fireworks | `fireworks` | `https://api.fireworks.ai/inference/v1` | `FIREWORKS_API_KEY` |
 | Groq | `groq` | `https://api.groq.com/openai/v1` | `GROQ_API_KEY` |
@@ -27,9 +28,17 @@ Use `cass login` to add or update provider configuration from the shell. Inside 
 
 Use `cass logout` or `/logout` to remove saved provider entries from Cassady config. Logout also removes model metadata entries associated with the removed providers and repairs active defaults when other providers remain. It does not delete environment variables, shell profile exports, API keys stored elsewhere, or external provider accounts.
 
+## ChatGPT Codex preset
+
+`ChatGPT Codex` is for users who have already signed in with Codex. Run `codex login` or sign in with the Codex app first, then select `ChatGPT Codex` in `cass login` or `cass setup`.
+
+Cassady reads the bearer token from `$CODEX_HOME/auth.json` or `~/.codex/auth.json` at check/request time. It does not copy the access token or refresh token into `~/.cass`, and `cass check` redacts secret values. Setup prefers the `model` value from `$CODEX_HOME/config.toml` when present and otherwise offers a default/manual model id.
+
+This preset uses `kind: "chatgpt-codex"` and posts to `https://chatgpt.com/backend-api/codex/responses`. That ChatGPT backend endpoint and Codex auth file format are outside Cassady's control, so users may need to update Cassady if they change.
+
 ## Model discovery
 
-When the selected API key environment variable is available, setup tries:
+For OpenAI-compatible providers, when the selected API key environment variable is available, setup tries:
 
 ```text
 GET {base_url}/models
@@ -46,7 +55,7 @@ A custom provider should expose OpenAI-compatible chat completions behavior at t
 - optional reasoning fields or reasoning request controls;
 - optional `/models` discovery during setup.
 
-Provider protocols that are not OpenAI-compatible are not currently supported.
+Provider protocols that are not OpenAI-compatible are supported only when Cassady has an explicit provider kind for them, such as `chatgpt-codex`.
 
 ## Provider vs model metadata
 
@@ -54,7 +63,7 @@ Provider protocols that are not OpenAI-compatible are not currently supported.
 
 - provider id;
 - base URL;
-- API key reference;
+- API key reference or local auth source;
 - optional default model;
 - optional list of associated model ids.
 
@@ -105,4 +114,4 @@ Run:
 cass check
 ```
 
-This confirms that the active provider and model resolve and that the active API key environment variable is set. Missing inactive-provider keys are warnings; missing active-provider keys are errors.
+This confirms that the active provider and model resolve. For OpenAI-compatible providers it checks API key environment variables; missing inactive-provider keys are warnings and missing active-provider keys are errors. For `ChatGPT Codex`, it checks that local Codex auth contains an access token and prints recovery steps if not.

@@ -1,5 +1,39 @@
 # Cassady (Cass) Roadmap
 
+## v0.3.0 — ChatGPT Codex Provider
+
+This release focuses on letting users who are already signed in to Codex with a ChatGPT subscription use that account from Cassady. `ChatGPT Codex` becomes a provider preset that calls the Codex responses endpoint and reads its bearer token from local Codex auth instead of an API-key environment variable. See `plans/V0_3_0_CHATGPT_CODEX_PROVIDER_PLAN.md`.
+
+### Provider Setup
+
+- [x] **Add a ChatGPT Codex provider preset.** Make `ChatGPT Codex` available from `cass login`, `/login`, and first-run setup as a distinct provider option.
+  - Use provider id `chatgpt-codex` and endpoint `https://chatgpt.com/backend-api/codex/responses`.
+  - Skip the normal API-key environment-variable prompt for this preset.
+  - Prefer the model configured in local Codex config when available, with manual model entry as a fallback.
+
+- [x] **Read local Codex auth safely.** Resolve the bearer token from `$CODEX_HOME/auth.json` or `~/.codex/auth.json` at check/request time.
+  - Support the local Codex `tokens.access_token` shape without copying the token into `~/.cass`.
+  - Give clear recovery steps when the user has not run `codex login`, signed in to the Codex app, or has an expired/missing token.
+
+### Provider Runtime
+
+- [x] **Add a ChatGPT Codex responses client.** Route `chatgpt-codex` providers to the exact Codex responses endpoint instead of the OpenAI-compatible `/chat/completions` path.
+  - Translate Cassady messages, tools, tool calls, and tool outputs to the endpoint's expected responses format.
+  - Stream assistant text, safe reasoning summaries when available, and function-call deltas back into the existing agent loop.
+
+- [x] **Keep OpenAI-compatible providers unchanged.** Refactor provider dispatch only as much as needed to support the new provider kind.
+  - Existing provider config, setup, model discovery, API-key env vars, `/model`, and `cass check` behavior should continue to work.
+  - Avoid leaking ChatGPT access tokens in errors, logs, transcripts, or config files.
+
+### Documentation and Validation
+
+- [x] **Document ChatGPT Codex prerequisites and caveats.** Update README and bundled docs for setup, config examples, `cass check`, troubleshooting, and the distinction between ChatGPT subscription-backed access and API-key providers.
+  - Make clear that Cassady uses an existing Codex login and does not implement its own browser login or token refresh flow in this release.
+  - Note that the ChatGPT backend endpoint may change outside Cassady's control.
+
+- [x] **Test Codex auth and provider behavior.** Cover Codex auth fixtures, config validation, setup catalog behavior, provider dispatch, streaming response parsing, tool calls, and secret redaction.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
+
 ## v0.2.9 — Provider Login Management
 
 This release focuses on making provider configuration available from both the shell and an active Cassady chat. Users can add or update OpenAI-compatible provider/model settings with `cass login` or `/login`, and remove saved providers and their associated models with `cass logout` or `/logout`. See `plans/V0_2_9_PROVIDER_LOGIN_MANAGEMENT_PLAN.md`.

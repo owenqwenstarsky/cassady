@@ -5,7 +5,7 @@ use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[test]
-fn provider_catalog_contains_expected_openai_compatible_providers() {
+fn provider_catalog_contains_expected_providers() {
     let catalog = setup::provider_catalog();
     let ids: Vec<_> = catalog.iter().map(|entry| entry.id).collect();
 
@@ -13,6 +13,7 @@ fn provider_catalog_contains_expected_openai_compatible_providers() {
         ids,
         vec![
             "openai",
+            "chatgpt-codex",
             "xai",
             "fireworks",
             "groq",
@@ -146,6 +147,33 @@ fn apply_setup_upserts_selected_provider_model_and_preserves_unrelated_entries()
         config.default_access_mode.unwrap().to_string(),
         "workspace-edit"
     );
+}
+
+#[test]
+fn apply_setup_writes_chatgpt_codex_without_api_key() {
+    let root = tempdir().unwrap();
+
+    setup::apply_setup(
+        root.path(),
+        &SetupSelection {
+            provider_id: config::CHATGPT_CODEX_PROVIDER_ID.into(),
+            provider_name: config::CHATGPT_CODEX_PROVIDER_NAME.into(),
+            base_url: config::CHATGPT_CODEX_RESPONSES_URL.into(),
+            api_key_env: String::new(),
+            model_id: config::CHATGPT_CODEX_DEFAULT_MODEL.into(),
+            supports_tools: true,
+            supports_reasoning: true,
+        },
+    )
+    .unwrap();
+
+    let providers: ProvidersFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("providers.json")).unwrap())
+            .unwrap();
+    let provider = &providers.providers[0];
+    assert_eq!(provider.id, config::CHATGPT_CODEX_PROVIDER_ID);
+    assert_eq!(provider.kind, config::CHATGPT_CODEX_PROVIDER_KIND);
+    assert!(provider.api_key.is_empty());
 }
 
 #[test]

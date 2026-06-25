@@ -128,6 +128,37 @@ fn reasoning_defaults_to_supported_medium_for_model_metadata() {
 }
 
 #[test]
+fn validation_accepts_chatgpt_codex_without_api_key() {
+    let providers = ProvidersFile {
+        providers: vec![ProviderDefinition {
+            id: config::CHATGPT_CODEX_PROVIDER_ID.into(),
+            name: Some(config::CHATGPT_CODEX_PROVIDER_NAME.into()),
+            kind: config::CHATGPT_CODEX_PROVIDER_KIND.into(),
+            base_url: config::CHATGPT_CODEX_RESPONSES_URL.into(),
+            api_key: String::new(),
+            default_model: Some(config::CHATGPT_CODEX_DEFAULT_MODEL.into()),
+            models: vec![config::CHATGPT_CODEX_DEFAULT_MODEL.into()],
+        }],
+    };
+    let models = ModelsFile {
+        models: vec![config::ModelDefinition {
+            id: config::CHATGPT_CODEX_DEFAULT_MODEL.into(),
+            provider: config::CHATGPT_CODEX_PROVIDER_ID.into(),
+            display_name: None,
+            context_length: None,
+            max_output_tokens: None,
+            supports_tools: true,
+            supports_streaming: true,
+            reasoning: Default::default(),
+        }],
+    };
+
+    let summary = config::validate_registries(None, &providers, &models);
+
+    assert!(summary.errors.is_empty(), "{:?}", summary.errors);
+}
+
+#[test]
 fn validation_rejects_duplicate_provider_ids() {
     let providers = ProvidersFile {
         providers: vec![
