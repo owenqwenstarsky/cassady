@@ -1,8 +1,35 @@
 site_name: Cassady
+site_url: "https://owenqwenstarsky.github.io/cassady/"
+site_description: "Cassady ('cass') is a terminal coding agent written in Rust."
+site_author: Owen Qwen
+repo_url: https://github.com/owenqwenstarsky/cassady
+repo_name: owenqwenstarsky/cassady
 nav:
   - Home: README.md
-  - Commands: commands.md
-  - Configuration: configuration.md
-  - "Providers & Models": providers.md
-  - "Access & tool safety": access-modes.md
-  - "Rust embedding": embedding.md
+  - Getting Started:
+      - Workflows: workflows.md
+      - Platform Notes: platforms.md
+  - Setup and Configuration:
+      - Configuration: configuration.md
+      - Providers and Models: providers.md
+  - Usage Reference:
+      - Commands: commands.md
+      - Access Modes and Tool Safety: access-modes.md
+      - Glossary: glossary.md
+  - Experimental:
+      - Rust API: embedding.md
+  - Help:
+      - Troubleshooting: troubleshooting.md
+extra:
+  version: 0.2.9
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/owenqwenstarsky/cassady
+theme:
+  name: material
+  favicon: img/favicon.ico
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.follow
