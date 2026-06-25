@@ -1,6 +1,6 @@
 [package]
 name = "cassady"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 description = "Cassady/Cass minimal terminal coding agent"
 license = "MIT"

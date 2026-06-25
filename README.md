@@ -105,7 +105,7 @@ Cassady stores user-editable files in `~/.cass`:
 - `config.json`: active defaults and preferences.
 - `providers.json`: provider base URLs and API key references.
 - `models.json`: model metadata.
-- `global.md`: optional global instructions added to new chats.
+- `global.md`: optional global instructions added to new chat system prompts when they fit the active request; they cannot override access modes, tool denials, approvals, or workspace boundaries.
 - `docs/`: bundled documentation installed from the current binary.
 
 API key references should usually be written as environment variables such as `"$OPENAI_API_KEY"`.

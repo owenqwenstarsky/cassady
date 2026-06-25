@@ -1,5 +1,53 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.4 — System Prompt Refinement
+
+This release focuses on making Cassady's system prompt clearer, more intuitive, and more useful for everyday coding work without letting it become bulky. The target is a well-structured prompt around 1,000 tokens that gives the model enough product context, safety expectations, and workflow guidance to behave consistently across read-only, workspace-edit, and full-access sessions. See `plans/V0_2_4_SYSTEM_PROMPT_REFINEMENT_PLAN.md`.
+
+### Prompt Structure and Content
+
+- [x] **Restructure the prompt into clear sections.** Replace the current compact prompt with a polished, scannable structure that explains identity, operating principles, tool use, editing, safety, and response style in a predictable order.
+  - Keep headings short and model-friendly so the prompt is easy to follow during long sessions.
+  - Preserve the existing split between the reusable base prompt, user global instructions, and runtime constraints.
+  - Avoid duplicating long documentation that already lives in README or bundled docs.
+
+- [x] **Add enough product context for intuitive behavior.** Teach the model what Cassady is, how the terminal chat works, and what the user can see without over-explaining implementation details.
+  - Explain that tool calls, tool results, diffs, approvals, and streamed assistant text are visible in the transcript.
+  - Clarify that Cassady is a coding assistant for real project work, so it should inspect before changing files, make targeted edits, and summarize outcomes honestly.
+  - Include guidance for asking focused follow-up questions only when necessary, instead of over-planning or guessing.
+
+- [x] **Keep the prompt intentionally compact.** Aim for roughly 900-1,100 tokens for the normal effective system prompt, including runtime access-mode guidance but excluding user-provided global instructions.
+  - Prefer dense, high-signal instructions over broad lists of examples.
+  - Remove redundant wording when new guidance overlaps with existing safety or response rules.
+  - Add a lightweight test or snapshot check so future prompt changes do not accidentally grow far beyond the intended size.
+
+### Tool, Editing, and Safety Guidance
+
+- [x] **Improve tool-use instructions.** Make the prompt explicit about when to read, grep, edit, write, and shell while still letting the model choose the right tool for the task.
+  - Encourage targeted inspection before edits and `grep`/search before opening large or unknown files.
+  - Explain that the model should request tools directly when useful; Cassady will enforce access policy, denials, and approval prompts at runtime.
+  - Remind the model not to claim a tool succeeded until the tool result confirms it.
+
+- [x] **Sharpen editing guidance.** Make file-change behavior safer and more reliable, especially for exact-text edits.
+  - Prefer `edit` for focused modifications and `write` only for new files or intentional full rewrites.
+  - Instruct the model to keep replacements minimal, unique, and non-overlapping.
+  - Encourage running or suggesting relevant tests after meaningful code changes.
+
+- [x] **Make access-mode behavior easy for the model to follow.** Rewrite read-only, workspace-edit, and full-access guidance in plain language that maps directly to available tools.
+  - Keep workspace and bundled-doc boundaries clear.
+  - State that shell approval is handled by Cassady's UI rather than by asking for permission in chat.
+  - Preserve conservative behavior when a task requires permissions the current mode does not allow.
+
+### Validation and Documentation
+
+- [x] **Add prompt-focused tests.** Verify that the generated prompt includes the required sections, preserves global instructions, reflects the active access mode, and stays within the intended size range.
+  - Cover read-only, workspace-edit, and full-access effective prompts.
+  - Include a regression check for prompt ordering so runtime constraints remain near the end.
+
+- [x] **Update user-facing references to global instructions.** Refresh docs only where needed to explain how `~/.cass/global.md` fits into the structured prompt.
+  - Avoid exposing the full internal prompt in documentation.
+  - Mention that user global instructions are respected unless they conflict with runtime safety constraints.
+
 ## v0.2.3 — Documentation and README Refresh ✅ Completed
 
 This release focuses on making Cassady understandable, trustworthy, and easy to operate by rewriting the README and bringing all bundled documentation up to date with the current CLI behavior. The work should cover user-facing documentation only; broad CLI feature work and Windows-specific runtime improvements are deferred to the planned Windows CLI usability work. See `plans/V0_2_3_DOCUMENTATION_README_REFRESH_PLAN.md`.

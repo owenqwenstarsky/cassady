@@ -5,7 +5,7 @@ Cassady reads user-editable config files from `~/.cass`.
 - `config.json`: user preferences, active defaults, and compatibility fields.
 - `providers.json`: provider connection definitions.
 - `models.json`: model metadata.
-- `global.md`: optional global instructions included in new chats.
+- `global.md`: optional global instructions included in new chat system prompts when they fit the active request; they cannot override access modes, tool denials, approvals, or workspace boundaries.
 - `conversations/`: saved JSONL chats.
 - `docs/`: bundled docs installed from the current binary.
 

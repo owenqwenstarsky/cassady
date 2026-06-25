@@ -14,7 +14,7 @@
 
 **Exact edit**: An `edit` tool replacement where each `old_text` must match exactly once in the original file before anything is written.
 
-**Global instructions**: Optional text in `~/.cass/global.md` included in new chat system prompts.
+**Global instructions**: Optional text in `~/.cass/global.md` included in new chat system prompts. Cassady follows these instructions when they fit the active request, but they cannot override runtime safety constraints such as access modes, tool denials, approvals, or workspace boundaries.
 
 **Model metadata**: The `models.json` entry describing a model id, owning provider, display name, context limits, tool/streaming support, and reasoning behavior.
 
