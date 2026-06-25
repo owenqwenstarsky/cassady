@@ -1,4 +1,4 @@
-name: Publish MkDocs site
+name: Publish Markdown site
 
 on:
   push:
@@ -6,12 +6,12 @@ on:
       - main
     paths:
       - 'docs/**'
-      - 'docs/mkdocs.yml'
+      - '.github/scripts/build-pages.py'
       - '.github/workflows/pages.yml'
   pull_request:
     paths:
       - 'docs/**'
-      - 'docs/mkdocs.yml'
+      - '.github/scripts/build-pages.py'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build MkDocs site
+    name: Build Markdown site
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -37,11 +37,11 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install MkDocs
-        run: python -m pip install mkdocs-material
+      - name: Install Markdown converter
+        run: python -m pip install Markdown
 
       - name: Build site
-        run: python -m mkdocs build --strict -f docs/mkdocs.yml
+        run: python .github/scripts/build-pages.py
 
       - name: Configure Pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
