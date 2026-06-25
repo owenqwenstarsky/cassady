@@ -600,9 +600,6 @@ fn ratatui_wrapped_row_count(line: &str, content_width: usize) -> usize {
         non_whitespace_previous = !is_whitespace;
     }
 
-    if !pending_line_has_symbols && word_symbols == 0 && whitespace_symbols > 0 {
-        rows = rows.saturating_add(1);
-    }
     if whitespace_symbols > 0 || word_symbols > 0 {
         pending_line_has_symbols = true;
     }
@@ -991,6 +988,11 @@ mod tests {
         let area = Rect::new(0, 0, 80, 10);
 
         assert_eq!(max_transcript_scroll(&transcript, false, false, area), 0);
+    }
+
+    #[test]
+    fn whitespace_only_line_counts_as_one_wrapped_row() {
+        assert_eq!(ratatui_wrapped_row_count("  ", 80), 1);
     }
 
     #[test]
