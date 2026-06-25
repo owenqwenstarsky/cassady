@@ -304,10 +304,19 @@ pub async fn run_turn_with_commands(
             let (runtime_tx, mut runtime_rx) = mpsc::unbounded_channel::<ToolRuntimeEvent>();
             let mut call_tool_ctx = tool_ctx.clone();
             call_tool_ctx.runtime_tx = Some(runtime_tx);
+            let file_edit_snapshot = crate::file_edits::begin_tool_edit(
+                &settings.config.root,
+                &conversation.id,
+                conversation.records.len(),
+                &call_id,
+                &call_name,
+                &call_arguments,
+                &call_tool_ctx,
+            );
             let output = {
                 let execute = tools::execute_with_approval(
                     &call_name,
-                    call_arguments,
+                    call_arguments.clone(),
                     &call_tool_ctx,
                     approved,
                 );
@@ -325,6 +334,11 @@ pub async fn run_turn_with_commands(
                 }
                 output
             };
+            if output.ok {
+                if let Some(snapshot) = file_edit_snapshot {
+                    let _ = crate::file_edits::finish_tool_edit(&settings.config.root, snapshot);
+                }
+            }
             let _ = tx.send(AgentEvent::ToolResult {
                 id: call_id.clone(),
                 name: call_name.clone(),

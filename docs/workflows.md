@@ -103,6 +103,16 @@ Inside the UI:
 
 This creates a new chat for the same cwd and model while preserving your current configuration.
 
+## Branch or restore a conversation point
+
+Press `Esc` twice while idle, or type:
+
+```text
+/branch
+```
+
+Use the menu to select a related branch or a checkpoint from a user message, assistant message, tool-call request, or tool result. Branching creates a new chat from that point and leaves the original chat available in the same menu. Choose conversation-only branching to leave files untouched, or choose branch-plus-files to restore Cassady-tracked `write`/`edit` snapshots with conflict checks.
+
 ## Check status
 
 ```text

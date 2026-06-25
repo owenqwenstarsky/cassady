@@ -143,6 +143,14 @@ Likely cause: Windows CRLF line endings or invisible whitespace differences.
 
 Fix: re-read the exact target region and preserve the line endings in `old_text`, or use a smaller unique snippet.
 
+## Branch/restore file conflicts
+
+Symptom: branch-plus-file restore reports conflicts or skips paths.
+
+Likely cause: the file changed outside Cassady after the tracked `write`/`edit`, the file is unsupported for snapshots, or the change came from a shell command or manual editor rather than a Cassady file tool.
+
+Fix: review the restore preview, inspect conflicted files manually, and rerun the menu with conversation-only branching if you only need to revisit the chat. Cassady will not overwrite unknown current content by default. Open the branch/restore menu again with double `Esc` or `/branch` to switch back to the original branch.
+
 ## Update command problems
 
 Symptom: `cass update` cannot complete.

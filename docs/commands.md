@@ -92,6 +92,7 @@ The updater does not invoke `sudo` or administrator prompts. If the install dire
 
 Type `/` to open command autocomplete.
 
+- `/branch` or `/restore`: open the branch/restore menu for the current conversation family.
 - `/model <model>`: switch the model for future turns. Autocomplete lists models from `~/.cass/models.json`.
 - `/new`: create a new chat for the current directory.
 - `/resume <chat>`: resume a saved chat from the current directory. Autocomplete lists matching chats.
@@ -113,7 +114,12 @@ Local commands can be used only when the agent is idle.
 - `y`: approve a pending tool approval prompt.
 - `n` or `Esc`: deny a pending tool approval prompt.
 - `Esc`: request cancellation while a turn is running.
+- `Esc` twice while idle: open the branch/restore menu without discarding draft input.
 - `Ctrl-C`: request cancellation while busy; press twice within 1.5 seconds to exit.
+
+## Branch/restore notes
+
+The branch/restore menu lists related conversations plus checkpoints for user messages, assistant messages, tool-call requests, and tool results. Selecting a checkpoint creates a new branch JSONL conversation and leaves the source conversation unchanged. Conversation-only branching leaves files untouched; branch-plus-file restore applies Cassady's tracked `write`/`edit` snapshots and skips unsafe hash conflicts.
 
 ## Output notes
 

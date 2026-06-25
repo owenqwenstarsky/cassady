@@ -1,5 +1,47 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.8 — Conversation Branch and Restore
+
+This release focuses on making conversation recovery safe and explorable. Pressing `Esc` twice while idle opens a branch/restore menu where users can browse prior user messages, assistant messages, and tool calls, create a new branch from a selected checkpoint, and optionally restore Cassady-tracked file edits without destroying the original conversation. See `plans/V0_2_8_CONVERSATION_BRANCH_RESTORE_PLAN.md`.
+
+### Branch Navigation
+
+- [x] **Open a branch/restore menu with double Esc.** Add an idle `Esc`-twice shortcut that mirrors the discoverability of double `Ctrl-C` while preserving current busy-turn cancellation and approval-denial behavior.
+  - Keep draft input intact when the menu is opened or cancelled.
+  - Provide clear status text after the first `Esc` so users know a second press opens branch/restore.
+
+- [x] **Browse checkpoints across the related branch family.** Show user messages, assistant messages, tool-call requests, and tool results from the current chat and related branches.
+  - Include enough preview text, tool names, paths, timestamps, and branch labels to choose the right point.
+  - Allow switching back to the original conversation or another existing branch from the same menu.
+
+### Safe Conversation Branching
+
+- [x] **Create branches instead of destructive reverts.** Selecting a checkpoint should write a new conversation JSONL with parent/checkpoint metadata, leaving the source conversation unchanged.
+  - Support repeated branching so users can return to the menu later and branch or switch again.
+  - Keep older conversations without branch metadata loadable.
+
+- [x] **Handle tool-call checkpoints cleanly.** Branching at a specific tool call or tool result should preserve a valid provider message history.
+  - Repair partial multi-tool assistant turns with synthetic cancelled/omitted tool results where needed.
+  - Add tests for branching at user, assistant, and tool boundaries.
+
+### File Edit Restoration
+
+- [x] **Journal Cassady file edits with restorable snapshots.** Record successful `write` and `edit` tool mutations outside the model-visible transcript with before/after hashes and snapshots.
+  - Keep restore support limited to Cassady-tracked file tools; warn that shell commands and manual edits are not automatically reversible.
+  - Store enough data to restore both backward and forward between tracked checkpoints.
+
+- [x] **Offer explicit conversation-only or conversation-plus-files restore actions.** Make conversation-only branching the safe default, and require confirmation before changing workspace files.
+  - Preview files to update or delete, detect hash conflicts, and refuse unsafe overwrites by default.
+  - Use atomic writes for restored files and preserve clear status/transcript messages for skipped or conflicted paths.
+
+### Documentation and Validation
+
+- [x] **Document branch/restore workflows and limitations.** Update README and bundled docs with the double-`Esc` shortcut, menu controls, branch semantics, and file-restore safety model.
+  - Include troubleshooting for restore conflicts and unsupported shell/manual filesystem changes.
+
+- [x] **Test the branch and restore model.** Cover branch metadata, checkpoint extraction, tool-call repair, edit journaling, restore planning, and keybinding behavior where practical.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before release.
+
 ## v0.2.7 — Self-Update Command
 
 This release focuses on making Cassady easy to keep current after installation. The goal is to let users run one clean command, `cass update`, to check GitHub releases, choose the recommended prebuilt binary or a source-build fallback, verify what will be installed, and update both `cass` and `cassady` safely. See `plans/V0_2_7_SELF_UPDATE_COMMAND_PLAN.md`.

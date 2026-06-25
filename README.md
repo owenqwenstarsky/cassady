@@ -74,6 +74,7 @@ cass update
 
 Common in-chat commands:
 
+- `/branch` or `/restore`: open the branch/restore menu.
 - `/model <model>`: switch to a model from `~/.cass/models.json`.
 - `/new`: create a new chat for the current directory.
 - `/resume <chat>`: resume a saved chat for the current directory.
@@ -88,7 +89,7 @@ Helpful keys:
 - `Tab`: cycle reasoning effort while idle.
 - `Ctrl-O`: toggle compact/full tool output display.
 - `Ctrl-Shift-R` or `Ctrl-R`: toggle reasoning display.
-- `Esc`: request turn cancellation while a turn is running.
+- `Esc`: request turn cancellation while a turn is running; while idle, press twice within 1.5 seconds to open branch/restore.
 - `Ctrl-C` twice within 1.5 seconds: exit.
 
 ## Safety model
@@ -100,6 +101,12 @@ Cassady exposes tools according to the active access mode:
 - `full-access`: read/write/edit broadly under your OS permissions and run shell commands without the workspace-edit approval prompt. Bundled docs remain read-only.
 
 Use `--readonly`, `--workspace-edit`, or `--full-access` to choose a mode at launch, or press `Shift-Tab` while idle.
+
+## Branch and restore
+
+Press `Esc` twice while idle, or type `/branch`, to browse the current conversation's branch family. Selecting an earlier user message, assistant message, tool call, or tool result creates a new branch conversation instead of truncating the original chat. The menu also lets you switch back to related branches later.
+
+Conversation-only branching is the safe default. If you choose file restore, Cassady restores only file changes it tracked from successful `write` and `edit` tools. Shell commands, manual edits, unsupported files, and hash conflicts are reported or skipped rather than overwritten blindly.
 
 ## Configuration and docs
 

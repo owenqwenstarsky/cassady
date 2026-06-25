@@ -5,7 +5,7 @@ use crate::ui::theme;
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 
@@ -26,7 +26,20 @@ pub struct TranscriptBlock {
     pub content: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct OverlayView {
+    pub title: String,
+    pub help: String,
+    pub items: Vec<OverlayItem>,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct OverlayItem {
+    pub label: String,
+    pub detail: String,
+}
+
 pub struct RenderState<'a> {
     pub app_name: &'a str,
     pub chat_id: &'a str,
@@ -42,6 +55,7 @@ pub struct RenderState<'a> {
     pub reasoning_effort: ReasoningEffort,
     pub scroll: u16,
     pub autofill: Option<&'a AutoFillMenu>,
+    pub overlay: Option<&'a OverlayView>,
 }
 
 pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
@@ -74,6 +88,10 @@ pub fn render(f: &mut Frame<'_>, state: &RenderState<'_>) {
 
     let footer = truncate_end(&footer_text(state), chunks[3].width as usize);
     f.render_widget(Paragraph::new(footer).style(theme::footer()), chunks[3]);
+
+    if let Some(overlay) = state.overlay {
+        render_overlay(f, f.area(), overlay);
+    }
 }
 
 pub fn transcript_area(area: Rect, input: &str) -> Rect {
@@ -114,6 +132,61 @@ fn main_layout(area: Rect, input: &str, menu_height: u16) -> std::rc::Rc<[Rect]>
 
 fn autofill_height(menu: Option<&AutoFillMenu>) -> u16 {
     menu.map(|menu| menu.items.len().min(6) as u16).unwrap_or(0)
+}
+
+fn render_overlay(f: &mut Frame<'_>, area: Rect, overlay: &OverlayView) {
+    let max_width = area.width.max(1);
+    let preferred_width = area.width.saturating_mul(4).saturating_div(5).max(40);
+    let width = preferred_width.min(max_width);
+    let max_height = area.height.saturating_sub(2).max(1);
+    let preferred_height = (overlay.items.len() as u16 + 5).max(8);
+    let height = preferred_height.min(max_height);
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let rect = Rect::new(x, y, width, height);
+    f.render_widget(Clear, rect);
+    let block = Block::default()
+        .title(overlay.title.clone())
+        .borders(Borders::ALL)
+        .style(theme::menu());
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let visible = inner.height.saturating_sub(2) as usize;
+    let selected = overlay.selected.min(overlay.items.len().saturating_sub(1));
+    let start = if selected >= visible && visible > 0 {
+        selected + 1 - visible
+    } else {
+        0
+    };
+    let end = (start + visible).min(overlay.items.len());
+    let mut lines = Vec::new();
+    lines.push(Line::styled(
+        truncate_end(&overlay.help, inner.width as usize),
+        Style::default().fg(Color::DarkGray),
+    ));
+    for idx in start..end {
+        let item = &overlay.items[idx];
+        let marker = if idx == selected { "›" } else { " " };
+        let mut text = format!("{marker} {}", item.label);
+        if !item.detail.is_empty() {
+            text.push_str("  ");
+            text.push_str(&item.detail);
+        }
+        let style = if idx == selected {
+            theme::selection()
+        } else {
+            theme::menu()
+        };
+        lines.push(Line::styled(
+            truncate_end(&text, inner.width as usize),
+            style,
+        ));
+    }
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 fn render_autofill_menu(f: &mut Frame<'_>, area: Rect, menu: &AutoFillMenu) {

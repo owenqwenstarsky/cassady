@@ -208,6 +208,8 @@ async fn run_tui(
     let mut reasoning_effort = config.reasoning_effort;
     let mut scroll: u16 = 0;
     let mut last_ctrl_c: Option<Instant> = None;
+    let mut last_esc: Option<Instant> = None;
+    let mut branch_menu: Option<BranchMenuState> = None;
     let mut handle: Option<JoinHandle<Result<Conversation>>> = None;
     let mut cancel_requested = false;
     let mut current_turn_start_len: Option<usize> = None;
@@ -332,6 +334,7 @@ async fn run_tui(
             )?
         };
 
+        let overlay_view = branch_menu.as_ref().map(BranchMenuState::overlay_view);
         terminal.draw(|f| {
             render::render(
                 f,
@@ -349,7 +352,12 @@ async fn run_tui(
                     show_reasoning,
                     reasoning_effort,
                     scroll,
-                    autofill: autofill.as_ref(),
+                    autofill: if branch_menu.is_some() {
+                        None
+                    } else {
+                        autofill.as_ref()
+                    },
+                    overlay: overlay_view.as_ref(),
                 },
             )
         })?;
@@ -358,6 +366,43 @@ async fn run_tui(
             match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let busy = handle.is_some();
+                    if branch_menu.is_some() {
+                        match handle_branch_menu_key(
+                            key.code,
+                            &mut branch_menu,
+                            &config,
+                            &cwd,
+                            &mut conversation,
+                            &mut chat_id,
+                            &mut transcript,
+                            &mut active_assistant,
+                            &mut active_reasoning,
+                            &mut active_tools,
+                            &mut status,
+                        ) {
+                            Ok(BranchMenuOutcome::None) => {}
+                            Ok(BranchMenuOutcome::Changed) => {
+                                stick_to_bottom = true;
+                                scroll = bottom_scroll(
+                                    &terminal,
+                                    &input,
+                                    &transcript,
+                                    show_full_tools,
+                                    show_reasoning,
+                                )?;
+                            }
+                            Err(err) => {
+                                branch_menu = None;
+                                status = format!("branch menu failed: {err}");
+                                transcript.push(TranscriptBlock {
+                                    kind: TranscriptKind::Error,
+                                    title: "branch".into(),
+                                    content: err.to_string(),
+                                });
+                            }
+                        }
+                        continue;
+                    }
                     if busy {
                         if let Some(pending) = pending_approval.clone() {
                             match key.code {
@@ -429,11 +474,13 @@ async fn run_tui(
                                 }
                                 cancel_requested = true;
                                 last_ctrl_c = Some(now);
+                                last_esc = None;
                                 status = "turn cancellation requested; press Ctrl-C again within 1.5s to exit".into();
                             } else {
                                 input.clear();
                                 autofill_selected = 0;
                                 last_ctrl_c = Some(now);
+                                last_esc = None;
                                 status = "press Ctrl-C again within 1.5s to exit".into();
                             }
                         }
@@ -443,7 +490,30 @@ async fn run_tui(
                             }
                             cancel_requested = true;
                             last_ctrl_c = None;
+                            last_esc = None;
                             status = "turn cancellation requested".into();
+                        }
+                        (KeyCode::Esc, _) => {
+                            let now = Instant::now();
+                            if last_esc
+                                .map(|t| now.duration_since(t) <= Duration::from_millis(1500))
+                                .unwrap_or(false)
+                            {
+                                match BranchMenuState::open(&config, &conversation) {
+                                    Ok(menu) => {
+                                        branch_menu = Some(menu);
+                                        last_esc = None;
+                                        status = "branch/restore menu".into();
+                                    }
+                                    Err(err) => {
+                                        last_esc = None;
+                                        status = format!("branch menu failed: {err}");
+                                    }
+                                }
+                            } else {
+                                last_esc = Some(now);
+                                status = "press Esc again within 1.5s to branch or restore".into();
+                            }
                         }
                         (KeyCode::BackTab, _) => {
                             if busy {
@@ -580,6 +650,28 @@ async fn run_tui(
                                 input.clear();
                             } else if input.trim_start().starts_with('/') {
                                 match parse_local_command(&input) {
+                                    Ok(LocalCommand::Branch) => {
+                                        if busy {
+                                            status = "branch menu can be opened when idle".into();
+                                        } else {
+                                            match BranchMenuState::open(&config, &conversation) {
+                                                Ok(menu) => {
+                                                    branch_menu = Some(menu);
+                                                    input.clear();
+                                                    autofill_selected = 0;
+                                                    status = "branch/restore menu".into();
+                                                }
+                                                Err(err) => {
+                                                    status = format!("branch menu failed: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "branch".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
                                     Ok(LocalCommand::Status) => {
                                         let content = chat_status(
                                             &chat_id,
@@ -863,6 +955,12 @@ async fn run_tui(
         {
             last_ctrl_c = None;
         }
+        if last_esc
+            .map(|t| t.elapsed() > Duration::from_millis(1500))
+            .unwrap_or(false)
+        {
+            last_esc = None;
+        }
     }
 }
 
@@ -870,6 +968,337 @@ async fn run_tui(
 struct PendingApproval {
     request_id: String,
     block_index: usize,
+}
+
+#[derive(Debug, Clone)]
+enum BranchMenuMode {
+    Main,
+    Actions(crate::branch::Checkpoint),
+}
+
+#[derive(Debug, Clone)]
+struct BranchMenuState {
+    mode: BranchMenuMode,
+    selected: usize,
+    family: crate::branch::BranchFamily,
+}
+
+#[derive(Debug, Clone)]
+enum BranchMenuItem {
+    Switch(String),
+    Checkpoint(crate::branch::Checkpoint),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BranchMenuOutcome {
+    None,
+    Changed,
+}
+
+impl BranchMenuState {
+    fn open(config: &Config, conversation: &Conversation) -> Result<Self> {
+        let family = crate::branch::load_family(&config.conversations_dir(), conversation)?;
+        Ok(Self {
+            mode: BranchMenuMode::Main,
+            selected: 0,
+            family,
+        })
+    }
+
+    fn overlay_view(&self) -> render::OverlayView {
+        match &self.mode {
+            BranchMenuMode::Main => render::OverlayView {
+                title: "Branch / Restore".into(),
+                help: "Enter select · Esc cancel · ↑/↓ move".into(),
+                selected: self.selected,
+                items: self
+                    .main_items()
+                    .into_iter()
+                    .map(|item| match item {
+                        BranchMenuItem::Switch(id) => {
+                            let branch = self.family.branches.iter().find(|b| b.id == id);
+                            let mut label = if branch.is_some_and(|b| b.current) {
+                                format!("current branch {id}")
+                            } else {
+                                format!("switch to {id}")
+                            };
+                            if branch.and_then(|b| b.parent_chat_id.as_ref()).is_none() {
+                                label.push_str(" (root)");
+                            }
+                            render::OverlayItem {
+                                label,
+                                detail: branch.and_then(|b| b.branch_label.clone()).unwrap_or_else(
+                                    || {
+                                        branch
+                                            .map(|b| format!("{} records", b.record_count))
+                                            .unwrap_or_default()
+                                    },
+                                ),
+                            }
+                        }
+                        BranchMenuItem::Checkpoint(checkpoint) => render::OverlayItem {
+                            label: format!("{} · {}", checkpoint.chat_id, checkpoint.label),
+                            detail: checkpoint.detail,
+                        },
+                    })
+                    .collect(),
+            },
+            BranchMenuMode::Actions(checkpoint) => render::OverlayView {
+                title: "Branch from checkpoint".into(),
+                help: format!(
+                    "{} · Enter select · Esc back",
+                    crate::branch::checkpoint_title(checkpoint)
+                ),
+                selected: self.selected,
+                items: vec![
+                    render::OverlayItem {
+                        label: "Branch conversation only".into(),
+                        detail: "safe default; leaves files unchanged".into(),
+                    },
+                    render::OverlayItem {
+                        label: "Branch conversation and restore tracked files".into(),
+                        detail: "applies safe Cassady write/edit snapshots; conflicts are skipped"
+                            .into(),
+                    },
+                    render::OverlayItem {
+                        label: "Preview tracked file restore plan".into(),
+                        detail: "show file actions in transcript".into(),
+                    },
+                    render::OverlayItem {
+                        label: "Cancel".into(),
+                        detail: String::new(),
+                    },
+                ],
+            },
+        }
+    }
+
+    fn main_items(&self) -> Vec<BranchMenuItem> {
+        let mut items = Vec::new();
+        for branch in &self.family.branches {
+            items.push(BranchMenuItem::Switch(branch.id.clone()));
+        }
+        for checkpoint in &self.family.checkpoints {
+            items.push(BranchMenuItem::Checkpoint(checkpoint.clone()));
+        }
+        items
+    }
+
+    fn len(&self) -> usize {
+        match self.mode {
+            BranchMenuMode::Main => self.main_items().len(),
+            BranchMenuMode::Actions(_) => 4,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_branch_menu_key(
+    code: KeyCode,
+    menu: &mut Option<BranchMenuState>,
+    config: &Config,
+    _cwd: &Path,
+    conversation: &mut Conversation,
+    chat_id: &mut String,
+    transcript: &mut Vec<TranscriptBlock>,
+    active_assistant: &mut Option<usize>,
+    active_reasoning: &mut Option<usize>,
+    active_tools: &mut HashMap<String, usize>,
+    status: &mut String,
+) -> Result<BranchMenuOutcome> {
+    let Some(state) = menu.as_mut() else {
+        return Ok(BranchMenuOutcome::None);
+    };
+    match code {
+        KeyCode::Esc => match state.mode {
+            BranchMenuMode::Main => {
+                *menu = None;
+                *status = "branch menu cancelled".into();
+            }
+            BranchMenuMode::Actions(_) => {
+                state.mode = BranchMenuMode::Main;
+                state.selected = 0;
+            }
+        },
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.selected = state.selected.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = state.len().saturating_sub(1);
+            state.selected = state.selected.saturating_add(1).min(max);
+        }
+        KeyCode::Enter => {
+            return apply_branch_menu_selection(
+                menu,
+                config,
+                conversation,
+                chat_id,
+                transcript,
+                active_assistant,
+                active_reasoning,
+                active_tools,
+                status,
+            );
+        }
+        _ => {}
+    }
+    Ok(BranchMenuOutcome::None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_branch_menu_selection(
+    menu: &mut Option<BranchMenuState>,
+    config: &Config,
+    conversation: &mut Conversation,
+    chat_id: &mut String,
+    transcript: &mut Vec<TranscriptBlock>,
+    active_assistant: &mut Option<usize>,
+    active_reasoning: &mut Option<usize>,
+    active_tools: &mut HashMap<String, usize>,
+    status: &mut String,
+) -> Result<BranchMenuOutcome> {
+    let Some(state) = menu.as_mut() else {
+        return Ok(BranchMenuOutcome::None);
+    };
+    match &state.mode {
+        BranchMenuMode::Main => {
+            let items = state.main_items();
+            let Some(item) = items.get(state.selected).cloned() else {
+                return Ok(BranchMenuOutcome::None);
+            };
+            match item {
+                BranchMenuItem::Switch(id) => {
+                    let (loaded, warning) = Conversation::load(&config.conversations_dir(), &id)?;
+                    *conversation = loaded;
+                    *chat_id = conversation.id.clone();
+                    *transcript = transcript_from_loaded(conversation, warning);
+                    *active_assistant = None;
+                    *active_reasoning = None;
+                    active_tools.clear();
+                    *status = format!("switched to branch {chat_id}");
+                    *menu = None;
+                    Ok(BranchMenuOutcome::Changed)
+                }
+                BranchMenuItem::Checkpoint(checkpoint) => {
+                    state.mode = BranchMenuMode::Actions(checkpoint);
+                    state.selected = 0;
+                    Ok(BranchMenuOutcome::None)
+                }
+            }
+        }
+        BranchMenuMode::Actions(checkpoint) => {
+            let selected = state.selected;
+            let checkpoint = checkpoint.clone();
+            match selected {
+                0 => branch_from_checkpoint(
+                    menu,
+                    config,
+                    &checkpoint,
+                    false,
+                    conversation,
+                    chat_id,
+                    transcript,
+                    active_assistant,
+                    active_reasoning,
+                    active_tools,
+                    status,
+                ),
+                1 => branch_from_checkpoint(
+                    menu,
+                    config,
+                    &checkpoint,
+                    true,
+                    conversation,
+                    chat_id,
+                    transcript,
+                    active_assistant,
+                    active_reasoning,
+                    active_tools,
+                    status,
+                ),
+                2 => {
+                    let plan = crate::file_edits::plan_restore(
+                        &config.root,
+                        &checkpoint.chat_id,
+                        checkpoint.record_index,
+                    )?;
+                    transcript.push(TranscriptBlock {
+                        kind: TranscriptKind::Status,
+                        title: "restore preview".into(),
+                        content: crate::file_edits::summarize_plan(&plan),
+                    });
+                    *status = "restore plan previewed".into();
+                    *menu = None;
+                    Ok(BranchMenuOutcome::Changed)
+                }
+                _ => {
+                    state.mode = BranchMenuMode::Main;
+                    state.selected = 0;
+                    Ok(BranchMenuOutcome::None)
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn branch_from_checkpoint(
+    menu: &mut Option<BranchMenuState>,
+    config: &Config,
+    checkpoint: &crate::branch::Checkpoint,
+    restore_files: bool,
+    conversation: &mut Conversation,
+    chat_id: &mut String,
+    transcript: &mut Vec<TranscriptBlock>,
+    active_assistant: &mut Option<usize>,
+    active_reasoning: &mut Option<usize>,
+    active_tools: &mut HashMap<String, usize>,
+    status: &mut String,
+) -> Result<BranchMenuOutcome> {
+    let (source, _) = Conversation::load(&config.conversations_dir(), &checkpoint.chat_id)?;
+    let branch = crate::branch::create_branch(&config.conversations_dir(), &source, checkpoint)?;
+    let old_id = checkpoint.chat_id.clone();
+    *conversation = branch;
+    *chat_id = conversation.id.clone();
+    *transcript = transcript_from_loaded(conversation, None);
+    *active_assistant = None;
+    *active_reasoning = None;
+    active_tools.clear();
+
+    let mut restore_status = String::new();
+    if restore_files {
+        let plan = crate::file_edits::plan_restore(
+            &config.root,
+            &checkpoint.chat_id,
+            checkpoint.record_index,
+        )?;
+        let summary = crate::file_edits::summarize_plan(&plan);
+        let outcome = crate::file_edits::apply_restore_plan(&plan)?;
+        restore_status = format!(
+            "; restored files: {} applied, {} skipped, {} conflicts",
+            outcome.applied, outcome.skipped, outcome.conflicts
+        );
+        transcript.push(TranscriptBlock {
+            kind: if outcome.conflicts == 0 {
+                TranscriptKind::Status
+            } else {
+                TranscriptKind::Error
+            },
+            title: "file restore".into(),
+            content: format!(
+                "{summary}\n\nApplied: {}\nSkipped: {}\nConflicts: {}",
+                outcome.applied, outcome.skipped, outcome.conflicts
+            ),
+        });
+    }
+
+    *status = format!(
+        "branched {chat_id} from {old_id} at {}{}",
+        crate::branch::checkpoint_title(checkpoint),
+        restore_status
+    );
+    *menu = None;
+    Ok(BranchMenuOutcome::Changed)
 }
 
 struct AgentEventContext<'a> {
@@ -1247,6 +1676,7 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalCommand {
+    Branch,
     Model(String),
     New,
     Resume(String),
@@ -1261,6 +1691,12 @@ struct CommandSpec {
 }
 
 const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "branch",
+        usage: "/branch",
+        description: "open branch/restore menu",
+        takes_value: false,
+    },
     CommandSpec {
         name: "model",
         usage: "/model <model>",
@@ -1511,6 +1947,12 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
     };
 
     match command {
+        "/branch" | "/restore" => {
+            if parts.next().is_some() {
+                return Err("usage: /branch".into());
+            }
+            Ok(LocalCommand::Branch)
+        }
         "/model" => {
             let Some(model) = parts.next() else {
                 return Err("usage: /model <model>".into());

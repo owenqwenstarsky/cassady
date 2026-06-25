@@ -14,6 +14,10 @@ pub enum Record {
         created_at: String,
         model: String,
         cwd: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_chat_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch_from: Option<BranchPoint>,
     },
     System {
         content: String,
@@ -38,6 +42,15 @@ pub enum Record {
         content: String,
         ts: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchPoint {
+    pub chat_id: String,
+    pub record_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    pub checkpoint_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -92,6 +105,8 @@ impl Conversation {
             created_at: now_ts(),
             model: model.to_string(),
             cwd: cwd.display().to_string(),
+            parent_chat_id: None,
+            branch_from: None,
         })?;
         convo.append(Record::System {
             content: base_system,
@@ -161,6 +176,37 @@ impl Conversation {
             _ => None,
         })
     }
+
+    pub fn meta(&self) -> Option<ConversationMeta> {
+        self.records.iter().find_map(|r| match r {
+            Record::Meta {
+                chat_id,
+                created_at,
+                model,
+                cwd,
+                parent_chat_id,
+                branch_from,
+            } => Some(ConversationMeta {
+                chat_id: chat_id.clone(),
+                created_at: created_at.clone(),
+                model: model.clone(),
+                cwd: cwd.clone(),
+                parent_chat_id: parent_chat_id.clone(),
+                branch_from: branch_from.clone(),
+            }),
+            _ => None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationMeta {
+    pub chat_id: String,
+    pub created_at: String,
+    pub model: String,
+    pub cwd: String,
+    pub parent_chat_id: Option<String>,
+    pub branch_from: Option<BranchPoint>,
 }
 
 pub fn list_chats(conversations_dir: &Path, cwd: &Path) -> Result<Vec<ChatSummary>> {

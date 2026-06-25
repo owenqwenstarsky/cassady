@@ -1,6 +1,7 @@
 pub mod access;
 pub mod agent;
 pub mod app;
+pub mod branch;
 pub mod check;
 pub mod cli;
 pub mod config;
@@ -8,6 +9,7 @@ pub mod conversation;
 pub mod docs;
 pub mod embedding;
 pub mod error;
+pub mod file_edits;
 pub mod menu;
 pub mod prelude;
 pub mod prompt;
