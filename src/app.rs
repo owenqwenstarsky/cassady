@@ -1,5 +1,5 @@
 use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
-use crate::cli::{self, Command};
+use crate::cli::{self, Cli, Command};
 use crate::config::{self, Config, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
 use crate::prompt;
@@ -31,6 +31,16 @@ pub async fn run() -> Result<()> {
         if report.has_errors() {
             std::process::exit(1);
         }
+        return Ok(());
+    }
+
+    if matches!(cli.command, Some(Command::Login)) {
+        let _ = crate::setup::run(&cli, crate::setup::SetupMode::Login).await?;
+        return Ok(());
+    }
+
+    if matches!(cli.command, Some(Command::Logout)) {
+        let _ = crate::setup::logout(&config::cass_root())?;
         return Ok(());
     }
 
@@ -84,7 +94,7 @@ pub async fn run() -> Result<()> {
         (create_new_conversation(&config, &cwd)?, None)
     };
 
-    run_tui(config, cwd, conversation, warning).await
+    run_tui(config, cwd, conversation, warning, cli).await
 }
 
 fn resolve_cwd(cwd: Option<PathBuf>) -> Result<PathBuf> {
@@ -115,6 +125,40 @@ fn list_chats(config: &Config, cwd: &std::path::Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn run_login_menu_from_tui(
+    terminal: &mut terminal::CassTerminal,
+    cli: &Cli,
+) -> Result<crate::setup::SetupOutcome> {
+    terminal::suspend(terminal)?;
+    let result = crate::setup::run(cli, crate::setup::SetupMode::Login).await;
+    let resume_result = terminal::resume(terminal);
+    match (result, resume_result) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+        (Err(err), Err(resume_err)) => Err(err.context(format!(
+            "also failed to restore the chat screen: {resume_err}"
+        ))),
+    }
+}
+
+fn run_logout_menu_from_tui(
+    terminal: &mut terminal::CassTerminal,
+    root: &Path,
+) -> Result<crate::setup::LogoutResult> {
+    terminal::suspend(terminal)?;
+    let result = crate::setup::logout(root);
+    let resume_result = terminal::resume(terminal);
+    match (result, resume_result) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(err), Ok(())) => Err(err),
+        (Ok(_), Err(err)) => Err(err),
+        (Err(err), Err(resume_err)) => Err(err.context(format!(
+            "also failed to restore the chat screen: {resume_err}"
+        ))),
+    }
 }
 
 fn finalize_cancelled_turn(
@@ -186,6 +230,7 @@ async fn run_tui(
     cwd: PathBuf,
     mut conversation: Conversation,
     warning: Option<String>,
+    cli: Cli,
 ) -> Result<()> {
     let mut terminal = terminal::enter()?;
     let mut transcript = Vec::new();
@@ -221,6 +266,7 @@ async fn run_tui(
     let mut chat_id = conversation.id.clone();
     let mut autofill_selected = 0usize;
     let mut pending_approval: Option<PendingApproval> = None;
+    let mut provider_ready = true;
 
     loop {
         drain_agent_events(
@@ -672,6 +718,150 @@ async fn run_tui(
                                             }
                                         }
                                     }
+                                    Ok(LocalCommand::Login) => {
+                                        if busy {
+                                            status = "login can be opened when idle".into();
+                                        } else {
+                                            input.clear();
+                                            autofill_selected = 0;
+                                            match run_login_menu_from_tui(&mut terminal, &cli).await
+                                            {
+                                                Ok(_) => match Config::load(&cli) {
+                                                    Ok(updated) => {
+                                                        config = updated;
+                                                        reasoning_effort = config.reasoning_effort;
+                                                        provider_ready = true;
+                                                        let content = format!(
+                                                            "active provider: {}\nactive model: {}",
+                                                            config.provider_id, config.model
+                                                        );
+                                                        transcript.push(TranscriptBlock {
+                                                            kind: TranscriptKind::Status,
+                                                            title: "login".into(),
+                                                            content,
+                                                        });
+                                                        status = "login updated".into();
+                                                    }
+                                                    Err(err) => {
+                                                        provider_ready = false;
+                                                        status = format!(
+                                                            "login saved with issues: {err}"
+                                                        );
+                                                        transcript.push(TranscriptBlock {
+                                                            kind: TranscriptKind::Error,
+                                                            title: "login".into(),
+                                                            content: format!(
+                                                                "Provider config could not be loaded: {err}"
+                                                            ),
+                                                        });
+                                                    }
+                                                },
+                                                Err(err) => {
+                                                    status = format!("login cancelled: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "login".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                }
+                                            }
+                                            if stick_to_bottom {
+                                                scroll = bottom_scroll(
+                                                    &terminal,
+                                                    &input,
+                                                    &transcript,
+                                                    show_full_tools,
+                                                    show_reasoning,
+                                                )?;
+                                            }
+                                        }
+                                    }
+                                    Ok(LocalCommand::Logout) => {
+                                        if busy {
+                                            status = "logout can be opened when idle".into();
+                                        } else {
+                                            input.clear();
+                                            autofill_selected = 0;
+                                            match run_logout_menu_from_tui(
+                                                &mut terminal,
+                                                &config.root,
+                                            ) {
+                                                Ok(result) => {
+                                                    if result.removed_provider_ids.is_empty() {
+                                                        transcript.push(TranscriptBlock {
+                                                            kind: TranscriptKind::Status,
+                                                            title: "logout".into(),
+                                                            content: "logout cancelled".into(),
+                                                        });
+                                                        status = "logout cancelled".into();
+                                                    } else if result.remaining_provider_count == 0 {
+                                                        provider_ready = false;
+                                                        transcript.push(TranscriptBlock {
+                                                            kind: TranscriptKind::Status,
+                                                            title: "logout".into(),
+                                                            content: format!(
+                                                                "removed providers: {}\nremoved model entries: {}\nno providers remain; run /login before sending another message",
+                                                                result.removed_provider_ids.join(", "),
+                                                                result.removed_model_count
+                                                            ),
+                                                        });
+                                                        status = "no provider configured".into();
+                                                    } else {
+                                                        match Config::load(&cli) {
+                                                            Ok(updated) => {
+                                                                config = updated;
+                                                                reasoning_effort =
+                                                                    config.reasoning_effort;
+                                                                provider_ready = true;
+                                                                transcript.push(TranscriptBlock {
+                                                                    kind: TranscriptKind::Status,
+                                                                    title: "logout".into(),
+                                                                    content: format!(
+                                                                        "removed providers: {}\nremoved model entries: {}\nactive provider: {}\nactive model: {}",
+                                                                        result.removed_provider_ids.join(", "),
+                                                                        result.removed_model_count,
+                                                                        config.provider_id,
+                                                                        config.model
+                                                                    ),
+                                                                });
+                                                                status = "logout updated".into();
+                                                            }
+                                                            Err(err) => {
+                                                                provider_ready = false;
+                                                                status = format!(
+                                                                    "logout saved with issues: {err}"
+                                                                );
+                                                                transcript.push(TranscriptBlock {
+                                                                    kind: TranscriptKind::Error,
+                                                                    title: "logout".into(),
+                                                                    content: format!(
+                                                                        "Provider config could not be loaded: {err}"
+                                                                    ),
+                                                                });
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    status = format!("logout cancelled: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "logout".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                }
+                                            }
+                                            if stick_to_bottom {
+                                                scroll = bottom_scroll(
+                                                    &terminal,
+                                                    &input,
+                                                    &transcript,
+                                                    show_full_tools,
+                                                    show_reasoning,
+                                                )?;
+                                            }
+                                        }
+                                    }
                                     Ok(LocalCommand::Status) => {
                                         let content = chat_status(
                                             &chat_id,
@@ -834,6 +1024,24 @@ async fn run_tui(
                                 }
                             } else if busy {
                                 status = "agent is still running".into();
+                            } else if !provider_ready {
+                                status = "run /login before sending a message".into();
+                                transcript.push(TranscriptBlock {
+                                    kind: TranscriptKind::Error,
+                                    title: "provider".into(),
+                                    content:
+                                        "No active provider is configured. Run /login before sending another message."
+                                            .into(),
+                                });
+                                if stick_to_bottom {
+                                    scroll = bottom_scroll(
+                                        &terminal,
+                                        &input,
+                                        &transcript,
+                                        show_full_tools,
+                                        show_reasoning,
+                                    )?;
+                                }
                             } else {
                                 let msg = input.trim_end().to_string();
                                 current_turn_start_len = Some(conversation.records.len());
@@ -1677,6 +1885,8 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalCommand {
     Branch,
+    Login,
+    Logout,
     Model(String),
     New,
     Resume(String),
@@ -1695,6 +1905,18 @@ const COMMANDS: &[CommandSpec] = &[
         name: "branch",
         usage: "/branch",
         description: "open branch/restore menu",
+        takes_value: false,
+    },
+    CommandSpec {
+        name: "login",
+        usage: "/login",
+        description: "configure provider login settings",
+        takes_value: false,
+    },
+    CommandSpec {
+        name: "logout",
+        usage: "/logout",
+        description: "remove saved providers and models",
         takes_value: false,
     },
     CommandSpec {
@@ -1952,6 +2174,18 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
                 return Err("usage: /branch".into());
             }
             Ok(LocalCommand::Branch)
+        }
+        "/login" => {
+            if parts.next().is_some() {
+                return Err("usage: /login".into());
+            }
+            Ok(LocalCommand::Login)
+        }
+        "/logout" => {
+            if parts.next().is_some() {
+                return Err("usage: /logout".into());
+            }
+            Ok(LocalCommand::Logout)
         }
         "/model" => {
             let Some(model) = parts.next() else {
@@ -2397,9 +2631,40 @@ mod tests {
     }
 
     #[test]
+    fn command_autofill_lists_login_and_logout_commands() {
+        let menu = command_autofill("/log", 0).unwrap();
+
+        let labels = menu
+            .items
+            .iter()
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["/login", "/logout"]);
+        assert_eq!(menu.items[0].insert, "/login");
+        assert_eq!(menu.items[1].insert, "/logout");
+    }
+
+    #[test]
     fn parse_local_command_accepts_new_without_args() {
         assert_eq!(parse_local_command("/new").unwrap(), LocalCommand::New);
         assert_eq!(parse_local_command("/new extra"), Err("usage: /new".into()));
+    }
+
+    #[test]
+    fn parse_local_command_accepts_login_and_logout_without_args() {
+        assert_eq!(parse_local_command("/login").unwrap(), LocalCommand::Login);
+        assert_eq!(
+            parse_local_command("/logout").unwrap(),
+            LocalCommand::Logout
+        );
+        assert_eq!(
+            parse_local_command("/login extra"),
+            Err("usage: /login".into())
+        );
+        assert_eq!(
+            parse_local_command("/logout extra"),
+            Err("usage: /logout".into())
+        );
     }
 
     #[test]

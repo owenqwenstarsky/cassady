@@ -1,5 +1,37 @@
 # Cassady (Cass) Roadmap
 
+## v0.2.9 — Provider Login Management
+
+This release focuses on making provider configuration available from both the shell and an active Cassady chat. Users can add or update OpenAI-compatible provider/model settings with `cass login` or `/login`, and remove saved providers and their associated models with `cass logout` or `/logout`. See `plans/V0_2_9_PROVIDER_LOGIN_MANAGEMENT_PLAN.md`.
+
+### Login Commands
+
+- [x] **Add login commands for provider setup.** Make `cass login` and `/login` open the provider setup flow so users can configure providers without remembering that setup is the underlying implementation.
+  - Reuse the existing provider catalog, model discovery, model capability prompts, and safe JSON writes.
+  - Keep `/login` idle-only and reload active provider/model config after the menu closes.
+
+- [x] **Keep existing setup behavior intact.** Preserve `cass setup` and first-run setup while making login language feel natural for account/provider management.
+  - Direct `cass login` should save configuration and exit rather than unexpectedly starting a chat.
+  - Existing setup validation and missing API key guidance should continue to apply.
+
+### Logout Commands
+
+- [x] **Add a safe provider removal menu.** Make `cass logout` and `/logout` let users choose saved providers to remove from `providers.json`.
+  - Remove associated `models.json` entries for selected providers.
+  - Confirm the removal before writing changes.
+
+- [x] **Repair active defaults after removal.** Ensure `config.json` never points at a provider/model that was just removed.
+  - Select a valid remaining provider/model when possible.
+  - Clear active provider/model defaults when no providers remain so the next startup offers login/setup.
+
+### Documentation and Validation
+
+- [x] **Document provider login and logout workflows.** Update command, configuration, and workflow docs with the new shell and in-chat commands.
+  - Clarify that logout removes Cassady provider config, not environment variables or external provider accounts.
+
+- [x] **Test provider management behavior.** Cover provider/model removal, active default repair, local command parsing, and autocomplete.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
+
 ## v0.2.8 — Conversation Branch and Restore
 
 This release focuses on making conversation recovery safe and explorable. Pressing `Esc` twice while idle opens a branch/restore menu where users can browse prior user messages, assistant messages, and tool calls, create a new branch from a selected checkpoint, and optionally restore Cassady-tracked file edits without destroying the original conversation. See `plans/V0_2_8_CONVERSATION_BRANCH_RESTORE_PLAN.md`.

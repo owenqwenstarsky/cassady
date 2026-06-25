@@ -27,3 +27,26 @@ pub fn leave(mut terminal: CassTerminal) -> Result<()> {
     terminal.show_cursor()?;
     Ok(())
 }
+
+pub fn suspend(terminal: &mut CassTerminal) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+pub fn resume(terminal: &mut CassTerminal) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture
+    )?;
+    terminal.clear()?;
+    terminal.hide_cursor()?;
+    Ok(())
+}

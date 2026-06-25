@@ -18,6 +18,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupMode {
     Explicit,
+    Login,
     Auto,
 }
 
@@ -45,6 +46,23 @@ pub struct SetupSelection {
     pub supports_reasoning: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderLogoutCandidate {
+    pub id: String,
+    pub name: Option<String>,
+    pub default_model: Option<String>,
+    pub model_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogoutResult {
+    pub removed_provider_ids: Vec<String>,
+    pub removed_model_count: usize,
+    pub remaining_provider_count: usize,
+    pub active_provider: Option<String>,
+    pub active_model: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ModelsResponse {
     data: Vec<ModelItem>,
@@ -58,6 +76,13 @@ struct ModelItem {
 fn print_banner() {
     println!("Cassady setup");
     println!("Configure an OpenAI-compatible provider, API key environment variable, and model.");
+}
+
+fn print_login_banner() {
+    println!("Cassady login");
+    println!(
+        "Add or update an OpenAI-compatible provider, API key environment variable, and model."
+    );
 }
 
 fn section(title: &str) {
@@ -187,10 +212,16 @@ pub async fn run(cli: &Cli, mode: SetupMode) -> Result<SetupOutcome> {
     fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
 
     if !io::stdin().is_terminal() {
-        bail!("setup is interactive; run `cass setup` in a terminal");
+        match mode {
+            SetupMode::Login => bail!("login is interactive; run `cass login` in a terminal"),
+            _ => bail!("setup is interactive; run `cass setup` in a terminal"),
+        }
     }
 
-    print_banner();
+    match mode {
+        SetupMode::Login => print_login_banner(),
+        _ => print_banner(),
+    }
 
     match mode {
         SetupMode::Explicit => {
@@ -206,6 +237,7 @@ pub async fn run(cli: &Cli, mode: SetupMode) -> Result<SetupOutcome> {
                 });
             }
         }
+        SetupMode::Login => {}
         SetupMode::Auto => {
             println!();
             hint("Cassady needs this before starting your first chat.");
@@ -234,26 +266,126 @@ pub async fn run(cli: &Cli, mode: SetupMode) -> Result<SetupOutcome> {
     let report = check::run(cli)?;
     if report.has_errors() {
         if std::env::var(&active_api_key_env).is_err() {
-            section("Setup saved");
+            section(match mode {
+                SetupMode::Login => "Login saved",
+                _ => "Setup saved",
+            });
             warn("Your active provider API key is not available in this shell.");
             hint(format!("Set it with: export {active_api_key_env}=..."));
             hint("Then run: cass");
         } else {
-            section("Setup saved with issues");
+            section(match mode {
+                SetupMode::Login => "Login saved with issues",
+                _ => "Setup saved with issues",
+            });
             print!("{}", report.render());
-            hint("Run `cass setup` to try again or edit ~/.cass/config.json manually.");
+            hint(match mode {
+                SetupMode::Login => {
+                    "Run `cass login` to try again or edit ~/.cass/config.json manually."
+                }
+                _ => "Run `cass setup` to try again or edit ~/.cass/config.json manually.",
+            });
         }
         return Ok(SetupOutcome {
             start_session: false,
         });
     }
 
-    section("Setup complete");
+    section(match mode {
+        SetupMode::Login => "Login complete",
+        _ => "Setup complete",
+    });
     success("Configuration saved and validated");
-    info("Starting your first Cassady session…");
+    match mode {
+        SetupMode::Login => info("Provider configuration is ready."),
+        _ => info("Starting your first Cassady session…"),
+    }
     Ok(SetupOutcome {
         start_session: true,
     })
+}
+
+pub fn logout(root: &Path) -> Result<LogoutResult> {
+    fs::create_dir_all(root).with_context(|| format!("creating {}", root.display()))?;
+    if !io::stdin().is_terminal() {
+        bail!("logout is interactive; run `cass logout` in a terminal");
+    }
+    let candidates = configured_providers(root)?;
+    if candidates.is_empty() {
+        bail!("no providers are configured; run `cass login` to add one");
+    }
+
+    section("Cassady logout");
+    warn("This removes provider entries from Cassady config only. It does not delete environment variables or provider accounts.");
+
+    let items = candidates
+        .iter()
+        .map(|candidate| {
+            let label = candidate.name.as_deref().unwrap_or(&candidate.id);
+            let model = candidate
+                .default_model
+                .as_deref()
+                .unwrap_or("no default model");
+            MenuItem::with_detail(
+                label.to_string(),
+                format!(
+                    "{} · {} · {} model{}",
+                    candidate.id,
+                    model,
+                    candidate.model_count,
+                    if candidate.model_count == 1 { "" } else { "s" }
+                ),
+            )
+        })
+        .collect();
+    let selected =
+        Menu::new("Remove saved providers", items).select_many(&BTreeSet::new(), true)?;
+    let provider_ids = selected
+        .into_iter()
+        .map(|idx| candidates[idx].id.clone())
+        .collect::<Vec<_>>();
+    let label = provider_ids.join(", ");
+    if !ask_yes_no(
+        &format!("Remove {label} and associated model entries?"),
+        false,
+    )? {
+        println!("Logout cancelled.");
+        return Ok(LogoutResult {
+            removed_provider_ids: Vec::new(),
+            removed_model_count: 0,
+            remaining_provider_count: candidates.len(),
+            active_provider: None,
+            active_model: None,
+        });
+    }
+
+    let result = remove_providers(root, &provider_ids)?;
+    if result.removed_provider_ids.is_empty() {
+        println!("No providers removed.");
+    } else {
+        success(format!(
+            "Removed {} provider{} and {} model entr{}",
+            result.removed_provider_ids.len(),
+            if result.removed_provider_ids.len() == 1 {
+                ""
+            } else {
+                "s"
+            },
+            result.removed_model_count,
+            if result.removed_model_count == 1 {
+                "y"
+            } else {
+                "ies"
+            }
+        ));
+        if let Some(provider) = &result.active_provider {
+            let model = result.active_model.as_deref().unwrap_or("no default model");
+            info(format!("Active provider is now {provider} ({model})"));
+        } else {
+            warn("No providers remain. Run `cass login` before starting a chat.");
+        }
+    }
+    Ok(result)
 }
 
 #[derive(Debug, Clone)]
@@ -563,6 +695,191 @@ pub fn apply_setups(root: &Path, selections: &[SetupSelection], active_index: us
     write_json_pretty(&config::models_path(root), &models)?;
     write_json_pretty(&config::config_path(root), &config_file)?;
     Ok(())
+}
+
+pub fn configured_providers(root: &Path) -> Result<Vec<ProviderLogoutCandidate>> {
+    let providers = load_providers_or_empty(root)?;
+    let models = load_models_or_empty(root)?;
+    Ok(providers
+        .providers
+        .into_iter()
+        .map(|provider| {
+            let model_count = models
+                .models
+                .iter()
+                .filter(|model| model.provider == provider.id)
+                .count();
+            ProviderLogoutCandidate {
+                id: provider.id,
+                name: provider.name,
+                default_model: provider.default_model,
+                model_count,
+            }
+        })
+        .collect())
+}
+
+pub fn remove_providers(root: &Path, provider_ids: &[String]) -> Result<LogoutResult> {
+    if provider_ids.is_empty() {
+        bail!("select at least one provider to remove");
+    }
+    let selected: BTreeSet<String> = provider_ids
+        .iter()
+        .map(|id| id.trim().to_string())
+        .collect();
+    if selected.iter().any(|id| id.is_empty()) {
+        bail!("provider id must not be empty");
+    }
+
+    fs::create_dir_all(root).with_context(|| format!("creating {}", root.display()))?;
+    let mut config_file = load_config_or_default(root)?;
+    let mut providers = load_providers_or_empty(root)?;
+    let mut models = load_models_or_empty(root)?;
+
+    let existing: BTreeSet<String> = providers
+        .providers
+        .iter()
+        .map(|provider| provider.id.clone())
+        .collect();
+    for id in &selected {
+        if !existing.contains(id) {
+            bail!("provider `{id}` is not configured");
+        }
+    }
+
+    let removed_provider_ids = providers
+        .providers
+        .iter()
+        .filter(|provider| selected.contains(&provider.id))
+        .map(|provider| provider.id.clone())
+        .collect::<Vec<_>>();
+    providers
+        .providers
+        .retain(|provider| !selected.contains(&provider.id));
+
+    let before_models = models.models.len();
+    models
+        .models
+        .retain(|model| !selected.contains(&model.provider));
+    let removed_model_count = before_models - models.models.len();
+
+    repair_active_defaults(&mut config_file, &providers, &models);
+
+    write_json_pretty(&config::providers_path(root), &providers)?;
+    write_json_pretty(&config::models_path(root), &models)?;
+    write_json_pretty(&config::config_path(root), &config_file)?;
+
+    Ok(LogoutResult {
+        removed_provider_ids,
+        removed_model_count,
+        remaining_provider_count: providers.providers.len(),
+        active_provider: config_file.default_provider,
+        active_model: config_file.default_model,
+    })
+}
+
+fn repair_active_defaults(
+    config_file: &mut ConfigFile,
+    providers: &ProvidersFile,
+    models: &ModelsFile,
+) {
+    if providers.providers.is_empty() {
+        config_file.default_provider = None;
+        config_file.default_model = None;
+        config_file.default_reasoning_effort = None;
+        return;
+    }
+
+    let current_provider = config_file
+        .default_provider
+        .as_ref()
+        .filter(|id| {
+            providers
+                .providers
+                .iter()
+                .any(|provider| provider.id == **id)
+        })
+        .cloned();
+    let provider_id =
+        current_provider.unwrap_or_else(|| choose_provider_with_model(providers, models));
+    let model = config_file
+        .default_model
+        .as_ref()
+        .filter(|model| model_belongs_to_provider(models, &provider_id, model))
+        .cloned()
+        .or_else(|| default_model_for_provider(providers, models, &provider_id));
+
+    config_file.default_provider = Some(provider_id);
+    config_file.default_model = model;
+    if let Some(effort) = config_file.default_reasoning_effort {
+        if let Some(model_id) = config_file.default_model.as_deref() {
+            let model = models.models.iter().find(|model| {
+                model.provider == config_file.default_provider.as_deref().unwrap_or_default()
+                    && model.id == model_id
+            });
+            config_file.default_reasoning_effort = Some(effort.clamp_for_model(model));
+        }
+    }
+}
+
+fn choose_provider_with_model(providers: &ProvidersFile, models: &ModelsFile) -> String {
+    providers
+        .providers
+        .iter()
+        .find(|provider| {
+            provider
+                .default_model
+                .as_ref()
+                .is_some_and(|model| model_belongs_to_provider(models, &provider.id, model))
+                || provider
+                    .models
+                    .iter()
+                    .any(|model| model_belongs_to_provider(models, &provider.id, model))
+                || models
+                    .models
+                    .iter()
+                    .any(|model| model.provider == provider.id)
+        })
+        .or_else(|| providers.providers.first())
+        .map(|provider| provider.id.clone())
+        .unwrap_or_default()
+}
+
+fn default_model_for_provider(
+    providers: &ProvidersFile,
+    models: &ModelsFile,
+    provider_id: &str,
+) -> Option<String> {
+    let provider = providers
+        .providers
+        .iter()
+        .find(|provider| provider.id == provider_id)?;
+    provider
+        .default_model
+        .as_ref()
+        .filter(|model| model_belongs_to_provider(models, provider_id, model))
+        .cloned()
+        .or_else(|| {
+            provider
+                .models
+                .iter()
+                .find(|model| model_belongs_to_provider(models, provider_id, model))
+                .cloned()
+        })
+        .or_else(|| {
+            models
+                .models
+                .iter()
+                .find(|model| model.provider == provider_id)
+                .map(|model| model.id.clone())
+        })
+}
+
+fn model_belongs_to_provider(models: &ModelsFile, provider_id: &str, model_id: &str) -> bool {
+    models
+        .models
+        .iter()
+        .any(|model| model.provider == provider_id && model.id == model_id)
 }
 
 fn upsert_provider(providers: &mut ProvidersFile, selection: &SetupSelection) {

@@ -21,6 +21,10 @@ cass setup
 
 Cassady also offers setup automatically when `cass` cannot resolve a usable active provider, model, or API key before starting a chat.
 
+For everyday provider management, `cass login` opens the same provider configuration flow with login-oriented wording. Inside an idle chat, `/login` temporarily opens that flow and reloads the active provider/model after it closes.
+
+To remove saved provider configuration, run `cass logout` or type `/logout` while idle. Logout removes selected providers from `providers.json` and removes their associated entries from `models.json`. It does not remove environment variables, local shell profile exports, or external provider accounts.
+
 The wizard uses keyboard prompts: `↑`/`↓` moves through choices, `Space` selects providers in the multi-select screen, and `Enter` submits. Text fields use the same prompt style instead of falling back to plain line input.
 
 The wizard supports configuring multiple OpenAI-compatible providers at once. If more than one provider is configured, setup asks which one should be active first. If the selected API key environment variable is set, Cassady tries to fetch models from `GET {base_url}/models` and lets you choose one. If discovery fails, it offers a retry before falling back to manual model entry. If the API key is not set, setup asks for a model id manually.
@@ -169,6 +173,7 @@ cass
 1. Edit one file at a time.
 2. Keep provider ids and model provider references in sync.
 3. Prefer API key env references over literal keys.
-4. Run `cass check` before starting a chat.
+4. Prefer `cass login` and `cass logout` for routine provider changes.
+5. Run `cass check` before starting a chat.
 
 Invalid JSON, unknown fields, duplicate ids, and missing provider/model links are reported by `cass check` with the file that failed.

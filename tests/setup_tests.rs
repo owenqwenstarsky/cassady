@@ -198,6 +198,146 @@ fn apply_setups_writes_multiple_providers_and_active_choice() {
 }
 
 #[test]
+fn remove_providers_removes_models_and_preserves_active_provider() {
+    let root = tempdir().unwrap();
+    let selections = vec![
+        SetupSelection {
+            provider_id: "openai".into(),
+            provider_name: "OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model_id: "gpt-4.1".into(),
+            supports_tools: true,
+            supports_reasoning: true,
+        },
+        SetupSelection {
+            provider_id: "groq".into(),
+            provider_name: "Groq".into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            model_id: "llama-3.3-70b-versatile".into(),
+            supports_tools: true,
+            supports_reasoning: false,
+        },
+    ];
+    setup::apply_setups(root.path(), &selections, 0).unwrap();
+
+    let result = setup::remove_providers(root.path(), &["groq".to_string()]).unwrap();
+
+    assert_eq!(result.removed_provider_ids, vec!["groq"]);
+    assert_eq!(result.removed_model_count, 1);
+    assert_eq!(result.remaining_provider_count, 1);
+    assert_eq!(result.active_provider.as_deref(), Some("openai"));
+    assert_eq!(result.active_model.as_deref(), Some("gpt-4.1"));
+
+    let providers: ProvidersFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("providers.json")).unwrap())
+            .unwrap();
+    assert_eq!(providers.providers.len(), 1);
+    assert_eq!(providers.providers[0].id, "openai");
+
+    let models: ModelsFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("models.json")).unwrap())
+            .unwrap();
+    assert_eq!(models.models.len(), 1);
+    assert_eq!(models.models[0].provider, "openai");
+}
+
+#[test]
+fn remove_active_provider_selects_remaining_provider_and_model() {
+    let root = tempdir().unwrap();
+    let selections = vec![
+        SetupSelection {
+            provider_id: "openai".into(),
+            provider_name: "OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model_id: "gpt-4.1".into(),
+            supports_tools: true,
+            supports_reasoning: true,
+        },
+        SetupSelection {
+            provider_id: "groq".into(),
+            provider_name: "Groq".into(),
+            base_url: "https://api.groq.com/openai/v1".into(),
+            api_key_env: "GROQ_API_KEY".into(),
+            model_id: "llama-3.3-70b-versatile".into(),
+            supports_tools: true,
+            supports_reasoning: false,
+        },
+    ];
+    setup::apply_setups(root.path(), &selections, 1).unwrap();
+
+    let result = setup::remove_providers(root.path(), &["groq".to_string()]).unwrap();
+
+    assert_eq!(result.active_provider.as_deref(), Some("openai"));
+    assert_eq!(result.active_model.as_deref(), Some("gpt-4.1"));
+    let config: ConfigFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("config.json")).unwrap())
+            .unwrap();
+    assert_eq!(config.default_provider.as_deref(), Some("openai"));
+    assert_eq!(config.default_model.as_deref(), Some("gpt-4.1"));
+}
+
+#[test]
+fn remove_all_providers_clears_active_defaults() {
+    let root = tempdir().unwrap();
+    setup::apply_setup(
+        root.path(),
+        &SetupSelection {
+            provider_id: "openai".into(),
+            provider_name: "OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model_id: "gpt-4.1".into(),
+            supports_tools: true,
+            supports_reasoning: true,
+        },
+    )
+    .unwrap();
+
+    let result = setup::remove_providers(root.path(), &["openai".to_string()]).unwrap();
+
+    assert_eq!(result.remaining_provider_count, 0);
+    assert!(result.active_provider.is_none());
+    assert!(result.active_model.is_none());
+
+    let config: ConfigFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("config.json")).unwrap())
+            .unwrap();
+    assert!(config.default_provider.is_none());
+    assert!(config.default_model.is_none());
+
+    let models: ModelsFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("models.json")).unwrap())
+            .unwrap();
+    assert!(models.models.is_empty());
+}
+
+#[test]
+fn remove_unknown_provider_fails() {
+    let root = tempdir().unwrap();
+    setup::apply_setup(
+        root.path(),
+        &SetupSelection {
+            provider_id: "openai".into(),
+            provider_name: "OpenAI".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            model_id: "gpt-4.1".into(),
+            supports_tools: true,
+            supports_reasoning: true,
+        },
+    )
+    .unwrap();
+
+    let err = setup::remove_providers(root.path(), &["missing".to_string()]).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("provider `missing` is not configured"));
+}
+
+#[test]
 fn needs_initial_setup_detects_empty_and_default_only_roots() {
     let root = tempdir().unwrap();
     assert!(setup::needs_initial_setup(root.path()));

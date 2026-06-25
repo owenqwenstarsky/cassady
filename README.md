@@ -34,9 +34,10 @@ Start Cassady in a project directory:
 cass
 ```
 
-If Cassady cannot resolve a usable provider, model, or API key, it offers to run setup before opening a chat. You can also run setup explicitly:
+If Cassady cannot resolve a usable provider, model, or API key, it offers to run setup before opening a chat. You can also run setup or provider login explicitly:
 
 ```sh
+cass login
 cass setup
 cass check
 cass update --check
@@ -66,6 +67,8 @@ cass [--model MODEL] [--cwd PATH]
 cass --resume <chat-id>
 cass --resume
 cass check
+cass login
+cass logout
 cass setup
 cass update
 ```
@@ -75,6 +78,8 @@ cass update
 Common in-chat commands:
 
 - `/branch` or `/restore`: open the branch/restore menu.
+- `/login`: configure or update provider login settings.
+- `/logout`: remove saved provider config and associated model entries.
 - `/model <model>`: switch to a model from `~/.cass/models.json`.
 - `/new`: create a new chat for the current directory.
 - `/resume <chat>`: resume a saved chat for the current directory.

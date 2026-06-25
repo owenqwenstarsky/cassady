@@ -57,6 +57,34 @@ Run the smallest relevant Rust test for this change, then summarize the result.
 
 When the approval prompt appears, press `y` to approve or `n`/`Esc` to deny. Shell commands run with `sh -c` from the launch cwd and default to a 30-second timeout unless the model requests another timeout.
 
+## Manage provider login
+
+Add or update provider configuration from the shell:
+
+```sh
+cass login
+```
+
+Inside an idle chat:
+
+```text
+/login
+```
+
+Remove saved provider configuration:
+
+```sh
+cass logout
+```
+
+Inside an idle chat:
+
+```text
+/logout
+```
+
+Logout removes selected providers from Cassady's config and removes their associated model entries. It does not delete environment variables or external provider accounts.
+
 ## Switch model
 
 Inside a chat:

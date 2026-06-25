@@ -21,6 +21,12 @@ The setup wizard offers these provider templates:
 
 There is also a custom OpenAI-compatible option. Custom setup asks for provider name, provider id, base URL, API key environment variable, and first model id.
 
+## Login and logout
+
+Use `cass login` to add or update provider configuration from the shell. Inside an idle chat, `/login` opens the same flow and reloads the active provider/model afterward.
+
+Use `cass logout` or `/logout` to remove saved provider entries from Cassady config. Logout also removes model metadata entries associated with the removed providers and repairs active defaults when other providers remain. It does not delete environment variables, shell profile exports, API keys stored elsewhere, or external provider accounts.
+
 ## Model discovery
 
 When the selected API key environment variable is available, setup tries:

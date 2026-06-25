@@ -44,6 +44,10 @@ pub struct Cli {
 pub enum Command {
     /// Validate Cass config files.
     Check,
+    /// Configure or update OpenAI-compatible provider login settings.
+    Login,
+    /// Remove saved providers and their models.
+    Logout,
     /// Configure an OpenAI-compatible provider and first model.
     Setup,
     /// Update Cassady from official GitHub releases.
