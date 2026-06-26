@@ -8,7 +8,7 @@ The project installs two equivalent commands, `cass` and `cassady`; examples use
 
 - Provider support includes OpenAI-compatible chat/completions APIs plus the `ChatGPT Codex` preset for users already signed in to Codex.
 - The primary interface is an interactive terminal UI.
-- v0.2.6 adds an experimental Rust embedding API for headless sessions; it is useful for early integrations but not yet a stable long-term library contract.
+- An experimental Rust embedding API for headless sessions is available (added in v0.2.6); it is useful for early integrations but not yet a stable long-term library contract.
 - Config and conversation state live under `~/.cass`.
 - Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
 - `cass update` can update release-archive installs from official GitHub releases; external package managers should still be updated through their own tools.
