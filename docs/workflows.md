@@ -111,9 +111,9 @@ Inside a chat:
 /fast
 ```
 
-Use `/fast on`, `/fast off`, or `/fast status` when you want an explicit action. Cassady saves the preference in `config.json`, but fast mode is active only when the current provider/model supports it. In v0.3.2, support is implemented for ChatGPT Codex model entries marked with `fast_mode.supported`.
+Use `/fast on`, `/fast off`, or `/fast status` when you want an explicit action. Cassady saves the preference in `config.json`, but fast mode is active only when the current provider/model supports it. ChatGPT Codex models, including `gpt-5.5`, are treated as fast-capable.
 
-Switching to an unsupported provider/model keeps the preference but makes `/status` show fast mode as unavailable. Switching back to a supported ChatGPT Codex model enables it again.
+Switching to an unsupported provider/model keeps the preference but makes `/status` show fast mode as unavailable. Switching back to ChatGPT Codex enables it again.
 
 ## Resume a chat
 

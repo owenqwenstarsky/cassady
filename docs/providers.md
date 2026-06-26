@@ -96,9 +96,9 @@ Reasoning display is separate. `show_reasoning` controls whether provider-stream
 Fast mode has two parts:
 
 - `default_fast_mode` in `config.json`: the user's saved preference.
-- `fast_mode.supported` in `models.json`: whether the active provider/model can honor that preference.
+- `fast_mode.supported` in `models.json`: whether non-Codex provider/model metadata can honor that preference.
 
-In v0.3.2, Cassady sends fast-mode requests only for `ChatGPT Codex`. Setup marks ChatGPT Codex model entries as fast-capable. OpenAI-compatible and custom model entries default to unsupported, so `/fast` can remember the preference without sending provider-specific fields.
+Cassady sends fast-mode requests only for `ChatGPT Codex`. Any active `chatgpt-codex` provider model, including `gpt-5.5`, is treated as fast-capable so older model metadata does not block the feature. OpenAI-compatible and custom model entries default to unsupported, so `/fast` can remember the preference without sending provider-specific fields.
 
 ## Switching models
 

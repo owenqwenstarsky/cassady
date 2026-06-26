@@ -1,8 +1,24 @@
 # Cassady (Cass) Roadmap
 
-## v0.3.3 — Tool Output Context Reliability
+## v0.3.3 — Codex Fast-Mode Compatibility
 
-This release focuses on making large tool outputs easier for the assistant to recover from when model-context compaction or truncation hides important details. Cassady should guide the assistant toward smaller, targeted reads and searches, preserve enough provenance for follow-up inspection, and add regression coverage for broad-output workflows that previously stalled safe edits. See `plans/V0_3_3_TOOL_OUTPUT_CONTEXT_RELIABILITY_PLAN.md`.
+This release focuses on keeping fast mode available for ChatGPT Codex users when local model metadata predates the fast-mode capability flag. Cassady should treat active `chatgpt-codex` provider models, including `gpt-5.5`, as fast-capable while leaving OpenAI-compatible and custom providers capability-gated by model metadata.
+
+### Fast Mode Compatibility
+
+- [x] **Treat ChatGPT Codex models as fast-capable at runtime.** Make `/fast` active for any active `chatgpt-codex` provider model even when legacy `models.json` metadata says `fast_mode.supported` is false.
+  - Keep non-Codex providers governed by their model metadata.
+  - Preserve the saved fast-mode preference behavior and status reporting.
+
+- [x] **Document the Codex capability fallback.** Update README and bundled docs so users understand that ChatGPT Codex models, including `gpt-5.5`, can honor fast mode without refreshed metadata.
+  - Keep docs clear that provider-specific fast-mode request shaping remains Codex-only.
+
+- [x] **Add regression coverage for legacy metadata.** Test that a ChatGPT Codex model with older `fast_mode.supported: false` metadata still reports fast mode as supported and active when preferred.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
+
+## v0.3.4 — Tool Output Context Reliability
+
+This release focuses on making large tool outputs easier for the assistant to recover from when model-context compaction or truncation hides important details. Cassady should guide the assistant toward smaller, targeted reads and searches, preserve enough provenance for follow-up inspection, and add regression coverage for broad-output workflows that previously stalled safe edits. See `plans/V0_3_4_TOOL_OUTPUT_CONTEXT_RELIABILITY_PLAN.md`.
 
 ### Model Context Recovery
 

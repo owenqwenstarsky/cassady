@@ -492,15 +492,13 @@ impl Config {
     }
 
     fn fast_mode_supported(&self) -> bool {
-        if self
-            .model_metadata
-            .as_ref()
-            .is_some_and(|model| model.fast_mode.supported)
-        {
+        if self.active_provider.kind == CHATGPT_CODEX_PROVIDER_KIND {
             return true;
         }
 
-        self.model_metadata.is_none() && self.active_provider.kind == CHATGPT_CODEX_PROVIDER_KIND
+        self.model_metadata
+            .as_ref()
+            .is_some_and(|model| model.fast_mode.supported)
     }
 
     fn fast_mode_unavailable_reason(&self) -> String {

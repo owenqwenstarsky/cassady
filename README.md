@@ -80,7 +80,7 @@ Common in-chat commands:
 - `/branch` or `/restore`: open the branch/restore menu.
 - `/login`: configure or update provider login settings.
 - `/logout`: remove saved provider config and associated model entries.
-- `/fast`, `/fast on`, `/fast off`, `/fast status`: prefer faster inference when the active provider/model supports it. v0.3.2 supports this for ChatGPT Codex models marked fast-capable.
+- `/fast`, `/fast on`, `/fast off`, `/fast status`: prefer faster inference when the active provider/model supports it. ChatGPT Codex models, including `gpt-5.5`, are treated as fast-capable.
 - `/model <model>`: switch to a model from `~/.cass/models.json`.
 - `/new`: create a new chat for the current directory.
 - `/resume <chat>`: resume a saved chat for the current directory.
