@@ -3,7 +3,7 @@ use crate::config::{Config, ReasoningEffort};
 use crate::conversation::{now_ts, Conversation, Record, StoredToolCall};
 use crate::prompt;
 use crate::providers::types::ModelMessage;
-use crate::providers::ProviderClient;
+use crate::providers::{ProviderClient, ProviderRuntimeOptions};
 use crate::security::PolicyDecision;
 use crate::tools::{self, ToolContext, ToolRuntimeEvent};
 use anyhow::Result;
@@ -88,7 +88,13 @@ pub async fn run_turn_with_commands(
     let reasoning_effort = settings
         .reasoning_effort
         .clamp_for_model(settings.config.model_metadata.as_ref());
-    let provider = match ProviderClient::from_config(&settings.config, reasoning_effort) {
+    let provider = match ProviderClient::from_config(
+        &settings.config,
+        ProviderRuntimeOptions {
+            reasoning_effort,
+            fast_mode: settings.config.fast_mode_state().active,
+        },
+    ) {
         Ok(provider) => provider,
         Err(err) => {
             append_visible_assistant(

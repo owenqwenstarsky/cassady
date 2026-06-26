@@ -174,6 +174,11 @@ fn apply_setup_writes_chatgpt_codex_without_api_key() {
     assert_eq!(provider.id, config::CHATGPT_CODEX_PROVIDER_ID);
     assert_eq!(provider.kind, config::CHATGPT_CODEX_PROVIDER_KIND);
     assert!(provider.api_key.is_empty());
+
+    let models: ModelsFile =
+        serde_json::from_str(&std::fs::read_to_string(root.path().join("models.json")).unwrap())
+            .unwrap();
+    assert!(models.models[0].fast_mode.supported);
 }
 
 #[test]

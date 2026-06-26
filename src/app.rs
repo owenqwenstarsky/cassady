@@ -1,6 +1,6 @@
 use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
 use crate::cli::{self, Cli, Command};
-use crate::config::{self, Config, ModelDefinition, ReasoningEffort};
+use crate::config::{self, Config, FastModeState, ModelDefinition, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
 use crate::prompt;
 use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
@@ -397,6 +397,7 @@ async fn run_tui(
                     show_full_tools,
                     show_reasoning,
                     reasoning_effort,
+                    fast_mode_active: config.fast_mode_state().active,
                     scroll,
                     autofill: if branch_menu.is_some() {
                         None
@@ -862,10 +863,46 @@ async fn run_tui(
                                             }
                                         }
                                     }
+                                    Ok(LocalCommand::Fast(command)) => {
+                                        if busy {
+                                            status = "fast mode can be changed when idle".into();
+                                        } else {
+                                            input.clear();
+                                            autofill_selected = 0;
+                                            match apply_fast_mode_command(&mut config, command) {
+                                                Ok(message) => {
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Status,
+                                                        title: "fast".into(),
+                                                        content: message.clone(),
+                                                    });
+                                                    status = message;
+                                                }
+                                                Err(err) => {
+                                                    status =
+                                                        format!("fast mode update failed: {err}");
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Error,
+                                                        title: "fast".into(),
+                                                        content: err.to_string(),
+                                                    });
+                                                }
+                                            }
+                                            if stick_to_bottom {
+                                                scroll = bottom_scroll(
+                                                    &terminal,
+                                                    &input,
+                                                    &transcript,
+                                                    show_full_tools,
+                                                    show_reasoning,
+                                                )?;
+                                            }
+                                        }
+                                    }
                                     Ok(LocalCommand::Status) => {
                                         let content = chat_status(
                                             &chat_id,
-                                            &config.model,
+                                            &config,
                                             mode,
                                             &cwd,
                                             busy,
@@ -894,14 +931,13 @@ async fn run_tui(
                                         if busy {
                                             status = "model can be changed when idle".into();
                                         } else {
-                                            config.model = model.clone();
-                                            config.model_metadata =
-                                                model_metadata_for(&config, &model)?;
+                                            apply_model_selection(&mut config, &model)?;
                                             reasoning_effort = ReasoningEffort::default_for_model(
                                                 config.model_metadata.as_ref(),
                                             );
-                                            let _ = crate::config::save_last_used(
+                                            let _ = crate::config::save_last_used_provider(
                                                 &config.root,
+                                                &config.provider_id,
                                                 &config.model,
                                                 reasoning_effort,
                                             );
@@ -910,9 +946,9 @@ async fn run_tui(
                                             transcript.push(TranscriptBlock {
                                                 kind: TranscriptKind::Status,
                                                 title: "model".into(),
-                                                content: format!("model changed to {model}"),
+                                                content: model_status_message(&config),
                                             });
-                                            status = format!("model: {model}");
+                                            status = model_status_message(&config);
                                             if stick_to_bottom {
                                                 scroll = bottom_scroll(
                                                     &terminal,
@@ -1885,11 +1921,20 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalCommand {
     Branch,
+    Fast(FastModeCommand),
     Login,
     Logout,
     Model(String),
     New,
     Resume(String),
+    Status,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FastModeCommand {
+    Toggle,
+    On,
+    Off,
     Status,
 }
 
@@ -1905,6 +1950,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "branch",
         usage: "/branch",
         description: "open branch/restore menu",
+        takes_value: false,
+    },
+    CommandSpec {
+        name: "fast",
+        usage: "/fast [on|off|status]",
+        description: "toggle faster Codex inference when supported",
         takes_value: false,
     },
     CommandSpec {
@@ -2038,14 +2089,38 @@ fn model_autofill(input: &str, selected: usize, config: &Config) -> Result<Optio
     }
 }
 
-fn model_metadata_for(config: &Config, model_id: &str) -> Result<Option<ModelDefinition>> {
+fn apply_model_selection(config: &mut Config, model_id: &str) -> Result<()> {
     let models = crate::config::load_or_create_default_model_registry(&config.root)?;
-    Ok(models
+    let metadata = models
         .models
         .iter()
         .find(|model| model.id == model_id && model.provider == config.provider_id)
         .cloned()
-        .or_else(|| models.models.into_iter().find(|model| model.id == model_id)))
+        .or_else(|| {
+            models
+                .models
+                .iter()
+                .find(|model| model.id == model_id)
+                .cloned()
+        });
+
+    if let Some(model) = &metadata {
+        if model.provider != config.provider_id {
+            let providers = crate::config::load_or_create_default_provider_registry(&config.root)?;
+            if let Some(provider) = providers
+                .providers
+                .iter()
+                .find(|provider| provider.id == model.provider)
+            {
+                config.provider_id = provider.id.clone();
+                config.active_provider = provider.to_resolved();
+            }
+        }
+    }
+
+    config.model = model_id.to_string();
+    config.model_metadata = metadata;
+    Ok(())
 }
 
 fn model_matches(model: &ModelDefinition, query: &str) -> bool {
@@ -2175,6 +2250,19 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
             }
             Ok(LocalCommand::Branch)
         }
+        "/fast" => {
+            let command = match parts.next() {
+                None => FastModeCommand::Toggle,
+                Some("on") => FastModeCommand::On,
+                Some("off") => FastModeCommand::Off,
+                Some("status") => FastModeCommand::Status,
+                Some(_) => return Err("usage: /fast [on|off|status]".into()),
+            };
+            if parts.next().is_some() {
+                return Err("usage: /fast [on|off|status]".into());
+            }
+            Ok(LocalCommand::Fast(command))
+        }
         "/login" => {
             if parts.next().is_some() {
                 return Err("usage: /login".into());
@@ -2223,7 +2311,7 @@ fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String>
 
 fn chat_status(
     chat_id: &str,
-    model: &str,
+    config: &Config,
     mode: crate::access::AccessMode,
     cwd: &Path,
     busy: bool,
@@ -2231,11 +2319,74 @@ fn chat_status(
     record_count: usize,
 ) -> String {
     format!(
-        "chat: {chat_id}\nstate: {}\nmodel: {model}\nmode: {mode}\ncwd: {}\nrecords: {record_count}\nstatus: {}",
+        "chat: {chat_id}\nstate: {}\nmodel: {}\nfast: {}\nmode: {mode}\ncwd: {}\nrecords: {record_count}\nstatus: {}",
         if busy { "running" } else { "idle" },
+        config.model,
+        fast_mode_status(&config.fast_mode_state()),
         cwd.display(),
         if status.is_empty() { "idle" } else { status }
     )
+}
+
+fn apply_fast_mode_command(config: &mut Config, command: FastModeCommand) -> Result<String> {
+    match command {
+        FastModeCommand::Status => Ok(fast_mode_status(&config.fast_mode_state())),
+        FastModeCommand::Toggle | FastModeCommand::On | FastModeCommand::Off => {
+            let enabled = match command {
+                FastModeCommand::Toggle => !config.default_fast_mode,
+                FastModeCommand::On => true,
+                FastModeCommand::Off => false,
+                FastModeCommand::Status => unreachable!(),
+            };
+            crate::config::save_fast_mode_preference(&config.root, enabled)?;
+            config.default_fast_mode = enabled;
+            Ok(fast_mode_change_message(&config.fast_mode_state()))
+        }
+    }
+}
+
+fn fast_mode_change_message(state: &FastModeState) -> String {
+    if state.active {
+        "fast mode enabled".into()
+    } else if state.preferred {
+        format!(
+            "fast mode preference on; unavailable for {}",
+            state
+                .unavailable_reason
+                .as_deref()
+                .unwrap_or("this provider/model")
+        )
+    } else {
+        "fast mode off".into()
+    }
+}
+
+fn fast_mode_status(state: &FastModeState) -> String {
+    if state.active {
+        "enabled".into()
+    } else if state.preferred {
+        format!(
+            "preferred, unavailable for {}",
+            state
+                .unavailable_reason
+                .as_deref()
+                .unwrap_or("this provider/model")
+        )
+    } else {
+        "off".into()
+    }
+}
+
+fn model_status_message(config: &Config) -> String {
+    let model = &config.model;
+    let state = config.fast_mode_state();
+    if state.active {
+        format!("model: {model} · fast enabled")
+    } else if state.preferred {
+        format!("model: {model} · fast unavailable")
+    } else {
+        format!("model: {model}")
+    }
 }
 
 fn transcript_from_loaded(
@@ -2664,6 +2815,67 @@ mod tests {
         assert_eq!(
             parse_local_command("/logout extra"),
             Err("usage: /logout".into())
+        );
+    }
+
+    #[test]
+    fn parse_local_command_accepts_fast_forms() {
+        assert_eq!(
+            parse_local_command("/fast").unwrap(),
+            LocalCommand::Fast(FastModeCommand::Toggle)
+        );
+        assert_eq!(
+            parse_local_command("/fast on").unwrap(),
+            LocalCommand::Fast(FastModeCommand::On)
+        );
+        assert_eq!(
+            parse_local_command("/fast off").unwrap(),
+            LocalCommand::Fast(FastModeCommand::Off)
+        );
+        assert_eq!(
+            parse_local_command("/fast status").unwrap(),
+            LocalCommand::Fast(FastModeCommand::Status)
+        );
+        assert_eq!(
+            parse_local_command("/fast maybe"),
+            Err("usage: /fast [on|off|status]".into())
+        );
+    }
+
+    #[test]
+    fn fast_mode_status_distinguishes_preference_and_activation() {
+        let mut config = Config {
+            default_fast_mode: true,
+            ..Config::default()
+        };
+
+        assert_eq!(
+            fast_mode_status(&config.fast_mode_state()),
+            "preferred, unavailable for provider fireworks"
+        );
+
+        config.provider_id = config::CHATGPT_CODEX_PROVIDER_ID.into();
+        config.active_provider.kind = config::CHATGPT_CODEX_PROVIDER_KIND.into();
+        config.model = config::CHATGPT_CODEX_DEFAULT_MODEL.into();
+        config.model_metadata = Some(config::ModelDefinition {
+            id: config::CHATGPT_CODEX_DEFAULT_MODEL.into(),
+            provider: config::CHATGPT_CODEX_PROVIDER_ID.into(),
+            display_name: None,
+            context_length: None,
+            max_output_tokens: None,
+            supports_tools: true,
+            supports_streaming: true,
+            reasoning: Default::default(),
+            fast_mode: config::FastModeMetadata { supported: true },
+        });
+
+        assert_eq!(fast_mode_status(&config.fast_mode_state()), "enabled");
+        assert_eq!(
+            model_status_message(&config),
+            format!(
+                "model: {} · fast enabled",
+                config::CHATGPT_CODEX_DEFAULT_MODEL
+            )
         );
     }
 

@@ -27,6 +27,8 @@ pub struct ConfigFile {
     pub default_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_fast_mode: Option<bool>,
 
     // Deprecated compatibility fields accepted from older config.json files.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -97,6 +99,8 @@ pub struct ModelDefinition {
     pub supports_streaming: bool,
     #[serde(default)]
     pub reasoning: ReasoningMetadata,
+    #[serde(default)]
+    pub fast_mode: FastModeMetadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +114,13 @@ pub struct ReasoningMetadata {
     pub default_effort: ReasoningEffort,
     #[serde(default)]
     pub request_format: ReasoningRequestFormat,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FastModeMetadata {
+    #[serde(default)]
+    pub supported: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +156,7 @@ pub struct Config {
     pub provider_id: String,
     pub model: String,
     pub reasoning_effort: ReasoningEffort,
+    pub default_fast_mode: bool,
     pub active_provider: ResolvedProviderConfig,
     pub model_metadata: Option<ModelDefinition>,
     pub default_access_mode: AccessMode,
@@ -155,6 +167,14 @@ pub struct Config {
     pub confirm_destructive_operations: bool,
     pub root: PathBuf,
     pub docs_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FastModeState {
+    pub preferred: bool,
+    pub supported: bool,
+    pub active: bool,
+    pub unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -199,6 +219,12 @@ impl Default for ReasoningMetadata {
             default_effort: ReasoningEffort::Medium,
             request_format: ReasoningRequestFormat::ReasoningEffort,
         }
+    }
+}
+
+impl Default for FastModeMetadata {
+    fn default() -> Self {
+        Self { supported: false }
     }
 }
 
@@ -287,6 +313,7 @@ impl Default for Config {
             provider_id: DEFAULT_PROVIDER_ID.to_string(),
             model: DEFAULT_MODEL.to_string(),
             reasoning_effort: ReasoningEffort::Medium,
+            default_fast_mode: false,
             active_provider,
             model_metadata: Some(default_model_definition()),
             default_access_mode: AccessMode::ReadOnly,
@@ -374,6 +401,9 @@ impl Config {
             if let Some(v) = file.confirm_destructive_operations {
                 cfg.confirm_destructive_operations = v;
             }
+            if let Some(v) = file.default_fast_mode {
+                cfg.default_fast_mode = v;
+            }
         }
 
         if let Some(access_mode) = overrides.access_mode {
@@ -443,6 +473,43 @@ impl Config {
             kind => bail!("unsupported provider kind `{kind}`"),
         }
     }
+
+    pub fn fast_mode_state(&self) -> FastModeState {
+        let preferred = self.default_fast_mode;
+        let supported = self.fast_mode_supported();
+        let active = preferred && supported;
+        let unavailable_reason = if preferred && !supported {
+            Some(self.fast_mode_unavailable_reason())
+        } else {
+            None
+        };
+        FastModeState {
+            preferred,
+            supported,
+            active,
+            unavailable_reason,
+        }
+    }
+
+    fn fast_mode_supported(&self) -> bool {
+        if self
+            .model_metadata
+            .as_ref()
+            .is_some_and(|model| model.fast_mode.supported)
+        {
+            return true;
+        }
+
+        self.model_metadata.is_none() && self.active_provider.kind == CHATGPT_CODEX_PROVIDER_KIND
+    }
+
+    fn fast_mode_unavailable_reason(&self) -> String {
+        if self.active_provider.kind != CHATGPT_CODEX_PROVIDER_KIND {
+            format!("provider {}", self.provider_id)
+        } else {
+            format!("model {}", self.model)
+        }
+    }
 }
 
 impl ProviderDefinition {
@@ -483,6 +550,28 @@ pub fn save_last_used(root: &Path, model: &str, reasoning_effort: ReasoningEffor
     file.default_reasoning_effort = Some(reasoning_effort);
     write_json_pretty(&path, &file)
 }
+
+pub fn save_last_used_provider(
+    root: &Path,
+    provider_id: &str,
+    model: &str,
+    reasoning_effort: ReasoningEffort,
+) -> Result<()> {
+    let path = config_path(root);
+    let mut file = load_config_file(root)?.unwrap_or_default();
+    file.default_provider = Some(provider_id.to_string());
+    file.default_model = Some(model.to_string());
+    file.default_reasoning_effort = Some(reasoning_effort);
+    write_json_pretty(&path, &file)
+}
+
+pub fn save_fast_mode_preference(root: &Path, enabled: bool) -> Result<()> {
+    let path = config_path(root);
+    let mut file = load_config_file(root)?.unwrap_or_default();
+    file.default_fast_mode = Some(enabled);
+    write_json_pretty(&path, &file)
+}
+
 pub fn load_or_create_default_provider_registry(root: &Path) -> Result<ProvidersFile> {
     fs::create_dir_all(root).with_context(|| format!("creating {}", root.display()))?;
     let path = providers_path(root);
@@ -533,6 +622,7 @@ pub fn default_model_definition() -> ModelDefinition {
         supports_tools: true,
         supports_streaming: true,
         reasoning: ReasoningMetadata::default(),
+        fast_mode: FastModeMetadata::default(),
     }
 }
 

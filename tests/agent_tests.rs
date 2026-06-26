@@ -124,6 +124,62 @@ async fn reasoning_effort_supports_reasoning_object_format() {
 }
 
 #[tokio::test]
+async fn fast_mode_preference_does_not_change_openai_compatible_request() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(sse(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Done.\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let root = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let docs = tempdir().unwrap();
+    let config = Config {
+        root: root.path().to_path_buf(),
+        docs_dir: docs.path().to_path_buf(),
+        model: "test-model".into(),
+        default_fast_mode: true,
+        active_provider: cassady::config::ResolvedProviderConfig {
+            base_url: server.uri(),
+            api_key: "test-key".into(),
+            ..Config::default().active_provider
+        },
+        ..Config::default()
+    };
+    let conversation = Conversation::create(
+        &config.conversations_dir(),
+        &config.model,
+        cwd.path(),
+        "base prompt".into(),
+    )
+    .unwrap();
+    let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
+
+    run_turn(
+        conversation,
+        "stay compatible".into(),
+        AgentSettings {
+            config,
+            cwd: cwd.path().to_path_buf(),
+            mode: AccessMode::ReadOnly,
+            reasoning_effort: ReasoningEffort::Off,
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    let body = String::from_utf8_lossy(&requests[0].body);
+    assert!(!body.contains("\"effort\":\"minimal\""));
+    assert!(!body.contains("\"fast_mode\""));
+}
+
+#[tokio::test]
 async fn reasoning_is_streamed_persisted_and_sent_back() {
     let server = MockServer::start().await;
 

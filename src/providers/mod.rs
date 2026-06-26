@@ -17,8 +17,14 @@ pub enum ProviderClient {
     ChatGptCodex(ChatGptCodexProvider),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderRuntimeOptions {
+    pub reasoning_effort: ReasoningEffort,
+    pub fast_mode: bool,
+}
+
 impl ProviderClient {
-    pub fn from_config(config: &Config, reasoning_effort: ReasoningEffort) -> Result<Self> {
+    pub fn from_config(config: &Config, options: ProviderRuntimeOptions) -> Result<Self> {
         match config.active_provider.kind.as_str() {
             DEFAULT_PROVIDER_KIND => {
                 let api_key = config.resolved_api_key()?;
@@ -32,7 +38,7 @@ impl ProviderClient {
                         model: config.model.clone(),
                         base_url: config.active_provider.base_url.clone(),
                         api_key,
-                        reasoning_effort,
+                        reasoning_effort: options.reasoning_effort,
                         reasoning_request_format,
                     },
                 )))
@@ -41,7 +47,8 @@ impl ProviderClient {
                 ChatGptCodexSettings {
                     model: config.model.clone(),
                     endpoint: config.active_provider.base_url.clone(),
-                    reasoning_effort,
+                    reasoning_effort: options.reasoning_effort,
+                    fast_mode: options.fast_mode,
                 },
             ))),
             kind => bail!("unsupported provider kind `{kind}`"),

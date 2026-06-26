@@ -74,7 +74,8 @@ Provider protocols that are not OpenAI-compatible are supported only when Cassad
 - display name;
 - context length and max output tokens;
 - tool and streaming support;
-- reasoning support and request format.
+- reasoning support and request format;
+- fast-mode support.
 
 `config.json` selects active defaults, such as `default_provider`, `default_model`, and `default_access_mode`.
 
@@ -90,6 +91,15 @@ Reasoning metadata controls how the runtime reasoning effort behaves:
 
 Reasoning display is separate. `show_reasoning` controls whether provider-streamed reasoning is visible in the transcript; press `Ctrl-Shift-R` or `Ctrl-R` to toggle it at runtime.
 
+## Fast-mode metadata
+
+Fast mode has two parts:
+
+- `default_fast_mode` in `config.json`: the user's saved preference.
+- `fast_mode.supported` in `models.json`: whether the active provider/model can honor that preference.
+
+In v0.3.2, Cassady sends fast-mode requests only for `ChatGPT Codex`. Setup marks ChatGPT Codex model entries as fast-capable. OpenAI-compatible and custom model entries default to unsupported, so `/fast` can remember the preference without sending provider-specific fields.
+
 ## Switching models
 
 Use one of these approaches:
@@ -104,7 +114,7 @@ or inside a chat:
 /model MODEL
 ```
 
-The in-chat model autocomplete lists entries from `~/.cass/models.json`. Switching the model also updates the default model and reasoning effort in `config.json` for future sessions.
+The in-chat model autocomplete lists entries from `~/.cass/models.json`. Switching the model also updates the default provider, default model, and reasoning effort in `config.json` for future sessions. If fast mode is preferred, Cassady recomputes whether it is active after the switch.
 
 ## Health checks
 

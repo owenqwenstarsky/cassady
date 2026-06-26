@@ -17,6 +17,7 @@ pub struct ChatGptCodexProvider {
     model: String,
     endpoint: String,
     reasoning_effort: ReasoningEffort,
+    fast_mode: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -24,6 +25,7 @@ pub struct ChatGptCodexSettings {
     pub model: String,
     pub endpoint: String,
     pub reasoning_effort: ReasoningEffort,
+    pub fast_mode: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -40,6 +42,7 @@ impl ChatGptCodexProvider {
             model: settings.model,
             endpoint: normalize_endpoint(&settings.endpoint),
             reasoning_effort: settings.reasoning_effort,
+            fast_mode: settings.fast_mode,
         }
     }
 
@@ -51,7 +54,13 @@ impl ChatGptCodexProvider {
     ) -> Result<CompletionResult> {
         let token = load_codex_access_token()?;
         let secret = token.as_secret().to_string();
-        let body = responses_body(&self.model, messages, tools, self.reasoning_effort);
+        let body = responses_body(
+            &self.model,
+            messages,
+            tools,
+            self.reasoning_effort,
+            self.fast_mode,
+        );
         let resp = self
             .client
             .post(&self.endpoint)
@@ -128,6 +137,7 @@ fn responses_body(
     messages: Vec<ModelMessage>,
     tools: Vec<ToolSpec>,
     reasoning_effort: ReasoningEffort,
+    fast_mode: bool,
 ) -> Value {
     let mut instructions = Vec::new();
     let mut input = Vec::new();
@@ -183,7 +193,9 @@ fn responses_body(
     if !instructions.is_empty() {
         body["instructions"] = Value::String(instructions.join("\n\n"));
     }
-    if let Some(effort) = reasoning_effort.request_value() {
+    if fast_mode {
+        body["reasoning"] = json!({"effort": "minimal", "summary": "auto"});
+    } else if let Some(effort) = reasoning_effort.request_value() {
         body["reasoning"] = json!({"effort": effort, "summary": "auto"});
     }
     body
@@ -464,6 +476,7 @@ mod tests {
             ],
             Vec::new(),
             ReasoningEffort::Off,
+            false,
         );
 
         assert_eq!(body["model"], "gpt-test");
@@ -471,6 +484,24 @@ mod tests {
         assert!(body["input"].as_array().unwrap().iter().any(|item| {
             item.get("type").and_then(Value::as_str) == Some("function_call_output")
         }));
+    }
+
+    #[test]
+    fn responses_body_uses_minimal_reasoning_for_fast_mode() {
+        let body = responses_body(
+            "gpt-test",
+            vec![ModelMessage::User {
+                content: "hello".into(),
+            }],
+            Vec::new(),
+            ReasoningEffort::High,
+            true,
+        );
+
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "minimal", "summary": "auto"})
+        );
     }
 
     #[test]
