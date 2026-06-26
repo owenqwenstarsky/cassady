@@ -18,7 +18,7 @@ struct FileArg {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "read".into(),
-        description: "Read one or more text files, optionally with 1-indexed line ranges like 35-60, 35-, or -60. In read-only and workspace-edit modes, paths must stay inside the launch cwd or bundled docs directory.".into(),
+        description: "Read one or more text files, optionally with 1-indexed line ranges like 35-60, 35-, or -60. Prefer grep first for unknown locations or large files, and re-read narrower ranges if prior output was compacted or truncated. In read-only and workspace-edit modes, paths must stay inside the launch cwd or bundled docs directory.".into(),
         parameters: schema::object(json!({
             "files": {
                 "type":"array",

@@ -136,6 +136,14 @@ Likely cause: the command itself failed, the working directory is wrong, depende
 
 Fix: inspect stdout/stderr, verify cwd in `/status`, and ask Cassady to rerun the smallest relevant command.
 
+## Tool output was compacted or truncated
+
+Symptom: a tool result note says Cassady compacted or truncated output, shows retained head/tail excerpts, or says a search stopped after a match limit.
+
+Likely cause: the raw tool output exceeded the model-facing result limit or the active model context budget.
+
+Fix: treat omitted output as incomplete. Ask Cassady to re-read the exact file line range named in the note, run a narrower `grep` query/path, lower `max_matches`, or rerun a shell command with a more focused flag/filter before making edits based on omitted lines.
+
 ## Exact-text edit failed
 
 Symptom: edit reports `old_text not found`, `old_text is not unique`, or overlapping edits.

@@ -1,5 +1,6 @@
 use cassady::access::AccessMode;
 use cassady::prompt::{build_base_system_prompt, build_effective_system_prompt};
+use cassady::tools;
 use std::path::Path;
 
 fn approximate_token_count(s: &str) -> usize {
@@ -44,6 +45,8 @@ fn base_prompt_has_required_sections_without_runtime_context() {
         "Tool calls, tool results, edit diffs, denials, and approval prompts are visible"
     ));
     assert!(prompt.contains("each old text must match exactly and uniquely"));
+    assert!(prompt.contains("compacted or truncated tool output as incomplete"));
+    assert!(prompt.contains("re-read a narrower range"));
     assert!(prompt.contains("End every turn with a concise user-facing response"));
     assert!(!prompt.contains("## Runtime context"));
     assert!(!prompt.contains("Model:"));
@@ -129,6 +132,19 @@ fn runtime_constraints_stay_after_global_instructions() {
     assert!(global_index < runtime_index);
     assert!(runtime_index < access_index);
     assert!(access_index < authority_index);
+}
+
+#[test]
+fn tool_specs_bias_toward_narrow_reinspection() {
+    let specs = tools::specs(AccessMode::FullAccess);
+    let read = specs.iter().find(|spec| spec.name == "read").unwrap();
+    let grep = specs.iter().find(|spec| spec.name == "grep").unwrap();
+    let shell = specs.iter().find(|spec| spec.name == "shell").unwrap();
+
+    assert!(read.description.contains("Prefer grep first"));
+    assert!(read.description.contains("compacted or truncated"));
+    assert!(grep.description.contains("large or unknown inputs"));
+    assert!(shell.description.contains("grep/head/tail"));
 }
 
 #[test]

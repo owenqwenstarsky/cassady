@@ -674,11 +674,26 @@ fn collapsed_tool_summary(content: &str) -> String {
         return "no output".into();
     }
     let lines = content.lines().count();
-    format!(
-        "{} · {} · tool output hidden",
-        pluralize(lines, "line"),
-        human_bytes(content.len())
-    )
+    let mut parts = vec![pluralize(lines, "line"), human_bytes(content.len())];
+    if let Some(marker) = tool_incompleteness_marker(content) {
+        parts.push(marker.into());
+    }
+    parts.push("tool output hidden".into());
+    parts.join(" · ")
+}
+
+fn tool_incompleteness_marker(content: &str) -> Option<&'static str> {
+    if content.contains("Cass compacted this tool output") {
+        Some("compacted")
+    } else if content.contains("truncated by Cass")
+        || content.contains("Cass truncated this tool output")
+    {
+        Some("truncated")
+    } else if content.contains("… stopped after ") {
+        Some("stopped early")
+    } else {
+        None
+    }
 }
 
 fn pluralize(count: usize, unit: &str) -> String {
@@ -897,6 +912,22 @@ mod tests {
         assert_eq!(rendered.len(), 2); // heading plus spacer
         assert!(text.contains("read ✓ (call_1) · 3 lines"));
         assert!(!text.contains("one\ntwo\nthree"));
+    }
+
+    #[test]
+    fn collapsed_tool_output_marks_incomplete_results() {
+        let transcript = vec![TranscriptBlock {
+            kind: TranscriptKind::Tool,
+            title: "grep ✓ (call_1)".into(),
+            content: "match\n… stopped after 1 matches. Narrow the query or raise max_matches."
+                .into(),
+        }];
+
+        let rendered = transcript_lines_from(&transcript, false, false);
+        let text = rendered_text(&rendered);
+
+        assert!(text.contains("stopped early"));
+        assert!(text.contains("tool output hidden"));
     }
 
     #[test]

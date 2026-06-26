@@ -6,27 +6,27 @@ This release focuses on making large tool outputs easier for the assistant to re
 
 ### Model Context Recovery
 
-- [ ] **Improve compacted tool-output guidance.** Replace generic head/tail compaction notices with actionable guidance that tells the assistant what was omitted and how to inspect it again safely.
+- [x] **Improve compacted tool-output guidance.** Replace generic head/tail compaction notices with actionable guidance that tells the assistant what was omitted and how to inspect it again safely.
   - Include tool name, output size, retained excerpt shape, and suggested narrower follow-up reads or searches when available.
   - Keep model-facing guidance concise enough that it does not worsen context pressure.
 
-- [ ] **Preserve targeted reinspection metadata.** Track enough structured context for large reads and command output so the assistant can recover omitted details without repeating broad requests.
+- [x] **Preserve targeted reinspection metadata.** Track enough structured context for large reads and command output so the assistant can recover omitted details without repeating broad requests.
   - For file reads, preserve path and line-range coverage even after compaction.
   - For shell and search output, prefer guidance toward narrower commands or `grep`/`read` follow-ups rather than blindly rerunning the same broad command.
 
 ### Tool Behavior and Prompting
 
-- [ ] **Bias tool use toward smaller inspections.** Update tool descriptions, prompt guidance, and result messages so broad reads become a fallback rather than the default.
+- [x] **Bias tool use toward smaller inspections.** Update tool descriptions, prompt guidance, and result messages so broad reads become a fallback rather than the default.
   - Encourage search-first workflows for large files and unknown locations.
   - Mention result limits before or at truncation points so the assistant knows when context may be incomplete.
 
-- [ ] **Make truncation and compaction visible across layers.** Align model-facing messages, stored conversation records, and UI summaries so users and the assistant can tell when output was incomplete.
+- [x] **Make truncation and compaction visible across layers.** Align model-facing messages, stored conversation records, and UI summaries so users and the assistant can tell when output was incomplete.
   - Do not let UI-only collapsed output change what is stored or sent to the model.
   - Keep existing conversation files readable and resumable.
 
 ### Validation
 
-- [ ] **Add regression coverage for broad-output recovery.** Test workflows where an early broad read or command output is compacted before the assistant needs exact context for an edit.
+- [x] **Add regression coverage for broad-output recovery.** Test workflows where an early broad read or command output is compacted before the assistant needs exact context for an edit.
   - Cover superseded reads, compacted non-newest tool outputs, provider-message validity, and suggested follow-up guidance.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 

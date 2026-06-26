@@ -227,7 +227,11 @@ fn truncate_model(mut s: String, limit: usize) -> String {
     if s.len() <= limit {
         return s;
     }
-    s.truncate(limit);
+    let mut end = limit.min(s.len());
+    while !s.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    s.truncate(end);
     s.push_str("\n… truncated by Cass; use grep or narrower line ranges for more.");
     s
 }

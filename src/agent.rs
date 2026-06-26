@@ -113,7 +113,9 @@ pub async fn run_turn_with_commands(
         cwd: settings.cwd.clone(),
         read_roots: vec![settings.cwd.clone(), docs_dir.clone()],
         blocked_write_roots: vec![docs_dir.clone()],
-        model_result_limit: settings.config.model_tool_result_limit,
+        // Keep stored/UI tool results intact; build_messages applies the
+        // model-facing result limit when preparing provider messages.
+        model_result_limit: usize::MAX,
         runtime_tx: None,
     };
 
@@ -476,6 +478,7 @@ fn build_messages(records: &[Record], system: String, config: &Config) -> Vec<Mo
     messages.extend(records.iter().filter_map(record_to_model_message));
     messages = sanitize_tool_message_structure(messages);
     supersede_old_read_outputs(&mut messages);
+    apply_model_tool_result_limits(&mut messages, config.model_tool_result_limit);
 
     let budget = context_budget_tokens(config);
     if estimate_messages_tokens(&messages) > budget {
@@ -518,7 +521,7 @@ fn record_to_model_message(record: &Record) -> Option<ModelMessage> {
 }
 
 fn supersede_old_read_outputs(messages: &mut [ModelMessage]) {
-    let read_calls = read_tool_calls_by_id(messages);
+    let read_calls = tool_calls_by_id(messages);
     let mut read_outputs = Vec::new();
     for (message_idx, message) in messages.iter().enumerate() {
         let ModelMessage::Tool {
@@ -579,16 +582,14 @@ fn tool_content(messages: &[ModelMessage], idx: usize) -> &str {
     }
 }
 
-fn read_tool_calls_by_id(messages: &[ModelMessage]) -> BTreeMap<String, StoredToolCall> {
+fn tool_calls_by_id(messages: &[ModelMessage]) -> BTreeMap<String, StoredToolCall> {
     let mut calls = BTreeMap::new();
     for message in messages {
         let ModelMessage::Assistant { tool_calls, .. } = message else {
             continue;
         };
         for call in tool_calls {
-            if call.name == "read" {
-                calls.insert(call.id.clone(), call.clone());
-            }
+            calls.insert(call.id.clone(), call.clone());
         }
     }
     calls
@@ -830,43 +831,134 @@ fn context_budget_tokens(config: &Config) -> usize {
         .max(MIN_INPUT_BUDGET_TOKENS)
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ToolOutputTransform {
+    Compaction,
+    Truncation,
+}
+
+impl ToolOutputTransform {
+    fn verb(self) -> &'static str {
+        match self {
+            ToolOutputTransform::Compaction => "compacted",
+            ToolOutputTransform::Truncation => "truncated",
+        }
+    }
+
+    fn reason(self) -> &'static str {
+        match self {
+            ToolOutputTransform::Compaction => "to fit the model context",
+            ToolOutputTransform::Truncation => {
+                "before sending it to the model because it exceeded the configured model_tool_result_limit"
+            }
+        }
+    }
+}
+
+fn apply_model_tool_result_limits(messages: &mut [ModelMessage], limit_chars: usize) {
+    let tool_calls = tool_calls_by_id(messages);
+    let target_chars = limit_chars.max(1);
+    for idx in 1..messages.len() {
+        transform_tool_output_at(
+            messages,
+            idx,
+            target_chars,
+            ToolOutputTransform::Truncation,
+            &tool_calls,
+        );
+    }
+}
+
 fn compact_tool_outputs(messages: &mut [ModelMessage], budget: usize) {
     let newest_tool_idx = messages
         .iter()
         .rposition(|message| matches!(message, ModelMessage::Tool { .. }));
+    let tool_calls = tool_calls_by_id(messages);
 
     for idx in 1..messages.len() {
         if Some(idx) == newest_tool_idx {
             continue;
         }
-        compact_tool_output_at(messages, idx, TOOL_OUTPUT_COMPACT_CHARS);
+        transform_tool_output_at(
+            messages,
+            idx,
+            TOOL_OUTPUT_COMPACT_CHARS,
+            ToolOutputTransform::Compaction,
+            &tool_calls,
+        );
         if estimate_messages_tokens(messages) <= budget {
             return;
         }
     }
 
     for idx in 1..messages.len() {
-        compact_tool_output_at(messages, idx, TOOL_OUTPUT_TINY_CHARS);
+        transform_tool_output_at(
+            messages,
+            idx,
+            TOOL_OUTPUT_TINY_CHARS,
+            ToolOutputTransform::Compaction,
+            &tool_calls,
+        );
         if estimate_messages_tokens(messages) <= budget {
             return;
         }
     }
 }
 
-fn compact_tool_output_at(messages: &mut [ModelMessage], idx: usize, target_chars: usize) {
-    let Some(ModelMessage::Tool { content, .. }) = messages.get_mut(idx) else {
-        return;
+fn transform_tool_output_at(
+    messages: &mut [ModelMessage],
+    idx: usize,
+    target_chars: usize,
+    transform: ToolOutputTransform,
+    tool_calls: &BTreeMap<String, StoredToolCall>,
+) {
+    let replacement = {
+        let Some(ModelMessage::Tool {
+            tool_call_id,
+            name,
+            content,
+        }) = messages.get(idx)
+        else {
+            return;
+        };
+        if content.chars().count() <= target_chars.max(1) {
+            return;
+        }
+        format_tool_output_transform(
+            name,
+            tool_calls.get(tool_call_id),
+            content,
+            target_chars,
+            transform,
+        )
     };
-    if content.chars().count() <= target_chars {
-        return;
+
+    if let Some(ModelMessage::Tool { content, .. }) = messages.get_mut(idx) {
+        *content = replacement;
     }
-    *content = compact_text(content, target_chars);
 }
 
-fn compact_text(content: &str, target_chars: usize) -> String {
+fn format_tool_output_transform(
+    tool_name: &str,
+    call: Option<&StoredToolCall>,
+    content: &str,
+    target_chars: usize,
+    transform: ToolOutputTransform,
+) -> String {
     let original_chars = content.chars().count();
-    let head_chars = (target_chars * 2 / 3).max(1);
-    let tail_chars = target_chars.saturating_sub(head_chars).max(1);
+    if original_chars <= target_chars.max(1) {
+        return content.to_string();
+    }
+
+    let target_chars = target_chars
+        .max(1)
+        .min(original_chars.saturating_sub(1).max(1));
+    let head_chars = if target_chars <= 1 {
+        1
+    } else {
+        (target_chars * 2 / 3).clamp(1, target_chars - 1)
+    };
+    let tail_chars = target_chars.saturating_sub(head_chars);
     let head: String = content.chars().take(head_chars).collect();
     let tail: String = content
         .chars()
@@ -876,9 +968,206 @@ fn compact_text(content: &str, target_chars: usize) -> String {
         .into_iter()
         .rev()
         .collect();
+    let notice = tool_output_transform_notice(
+        tool_name,
+        call,
+        content,
+        original_chars,
+        head_chars,
+        tail_chars,
+        transform,
+    );
+
+    let mut out = String::new();
+    out.push_str(&notice);
+    out.push_str("\n--- retained head excerpt ---\n");
+    out.push_str(&head);
+    out.push_str("\n--- omitted middle ---\n");
+    if tail_chars > 0 {
+        out.push_str("--- retained tail excerpt ---\n");
+        out.push_str(&tail);
+    }
+    out
+}
+
+fn tool_output_transform_notice(
+    tool_name: &str,
+    call: Option<&StoredToolCall>,
+    content: &str,
+    original_chars: usize,
+    head_chars: usize,
+    tail_chars: usize,
+    transform: ToolOutputTransform,
+) -> String {
+    let retained_shape = if tail_chars > 0 {
+        format!("{head_chars} chars from the start and {tail_chars} chars from the end")
+    } else {
+        format!("{head_chars} chars from the start")
+    };
+    let mut sentences = vec![format!(
+        "Cass {} this tool output from {original_chars} chars {}. Tool: `{tool_name}`. Retained excerpt shape: {retained_shape}.",
+        transform.verb(),
+        transform.reason(),
+    )];
+    if let Some(provenance) = tool_output_provenance_sentence(tool_name, call, content) {
+        sentences.push(provenance);
+    }
+    sentences.push(tool_output_recovery_guidance(tool_name).to_string());
+    format!("[{}]", sentences.join(" "))
+}
+
+fn tool_output_provenance_sentence(
+    tool_name: &str,
+    call: Option<&StoredToolCall>,
+    content: &str,
+) -> Option<String> {
+    match tool_name {
+        "read" => read_output_provenance_sentence(call, content),
+        "grep" => grep_output_provenance_sentence(content),
+        "shell" => shell_output_provenance_sentence(call),
+        _ => None,
+    }
+}
+
+fn read_output_provenance_sentence(call: Option<&StoredToolCall>, content: &str) -> Option<String> {
+    let request_specs = call
+        .filter(|call| call.name == "read")
+        .map(|call| read_request_specs(&call.arguments))
+        .unwrap_or_default();
+    let sections = parse_read_output_sections(content, &request_specs);
+    if !sections.is_empty() {
+        return Some(format!(
+            "Omitted content came from {}.",
+            read_sections_summary(&sections)
+        ));
+    }
+    read_request_summary(call).map(|summary| format!("The read request targeted {summary}."))
+}
+
+fn read_sections_summary(sections: &[ReadOutputSection]) -> String {
+    let labels: Vec<String> = sections.iter().take(2).map(read_section_label).collect();
+    match sections.len() {
+        0 => "no read sections".into(),
+        1 => labels[0].clone(),
+        2 => format!("2 read sections: {} and {}", labels[0], labels[1]),
+        count => format!(
+            "{count} read sections including {} and {}",
+            labels[0], labels[1]
+        ),
+    }
+}
+
+fn read_section_label(section: &ReadOutputSection) -> String {
     format!(
-        "[Cass compacted this tool output from {original_chars} chars to fit the model context. Head/tail excerpt follows.]\n{head}\n… omitted …\n{tail}"
+        "{} lines {}-{}",
+        section.path, section.start_line, section.end_line
     )
+}
+
+fn read_request_summary(call: Option<&StoredToolCall>) -> Option<String> {
+    let call = call.filter(|call| call.name == "read")?;
+    let mut labels = Vec::new();
+    if let Some(files) = call
+        .arguments
+        .get("files")
+        .and_then(|files| files.as_array())
+    {
+        for file in files.iter().take(2) {
+            let Some(path) = file.get("path").and_then(|path| path.as_str()) else {
+                continue;
+            };
+            labels.push(read_request_label(
+                path,
+                file.get("lines").and_then(|lines| lines.as_str()),
+            ));
+        }
+        return match labels.len() {
+            0 => None,
+            1 => labels.first().cloned(),
+            2 if files.len() == 2 => Some(format!("2 files: {} and {}", labels[0], labels[1])),
+            _ => Some(format!(
+                "{} files including {} and {}",
+                files.len(),
+                labels[0],
+                labels[1]
+            )),
+        };
+    }
+
+    call.arguments
+        .get("path")
+        .and_then(|path| path.as_str())
+        .map(|path| {
+            read_request_label(
+                path,
+                call.arguments.get("lines").and_then(|lines| lines.as_str()),
+            )
+        })
+}
+
+fn read_request_label(path: &str, lines: Option<&str>) -> String {
+    match lines.map(str::trim).filter(|lines| !lines.is_empty()) {
+        Some(lines) => format!("{path} lines {lines}"),
+        None => path.to_string(),
+    }
+}
+
+fn grep_output_provenance_sentence(content: &str) -> Option<String> {
+    grep_stopped_after(content)
+        .map(|count| format!("The grep output reported it stopped after {count} matches."))
+}
+
+fn grep_stopped_after(content: &str) -> Option<usize> {
+    content.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix("… stopped after ")?;
+        rest.split_whitespace().next()?.parse().ok()
+    })
+}
+
+fn shell_output_provenance_sentence(call: Option<&StoredToolCall>) -> Option<String> {
+    let call = call.filter(|call| call.name == "shell")?;
+    let command = call.arguments.get("command")?.as_str()?.trim();
+    if command.is_empty() {
+        return None;
+    }
+    let preview = command.split_whitespace().collect::<Vec<_>>().join(" ");
+    if command_preview_may_contain_sensitive_text(&preview) {
+        return Some(
+            "Shell command preview omitted because it may contain sensitive text; inspect the preceding tool-call arguments before rerunning."
+                .into(),
+        );
+    }
+    let chars = preview.chars().count();
+    if chars > 160 {
+        return Some(format!(
+            "Shell command was {chars} chars; inspect the preceding tool-call arguments before rerunning."
+        ));
+    }
+    Some(format!("Shell command: `{preview}`."))
+}
+
+fn command_preview_may_contain_sensitive_text(command: &str) -> bool {
+    let lowered = command.to_ascii_lowercase();
+    [
+        "api_key",
+        "apikey",
+        "authorization",
+        "bearer",
+        "password",
+        "secret",
+        "token",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+fn tool_output_recovery_guidance(tool_name: &str) -> &'static str {
+    match tool_name {
+        "read" => "Recovery: use `read` with a narrower line range, or `grep` for a symbol before reading, before relying on omitted details.",
+        "grep" => "Recovery: rerun `grep` with a narrower query/path, lower `max_matches`, or `read` around specific matching lines before relying on omitted details.",
+        "shell" => "Recovery: rerun a narrower command, filter output with grep/head/tail, or inspect specific files named in the excerpt before making edits from omitted lines.",
+        _ => "Recovery: rerun a narrower tool request or inspect the specific file/range from the excerpt before relying on omitted details.",
+    }
 }
 
 fn trim_to_context_budget(mut messages: Vec<ModelMessage>, budget: usize) -> Vec<ModelMessage> {
@@ -894,7 +1183,7 @@ fn trim_to_context_budget(mut messages: Vec<ModelMessage>, budget: usize) -> Vec
 
     if omitted {
         let note = ModelMessage::System {
-            content: "Cass omitted earlier conversation messages to fit the model context budget. Included tool results still follow their matching assistant tool calls; older large tool outputs may be compacted.".to_string(),
+            content: "Cass omitted earlier conversation messages to fit the model context budget. Included tool results still follow their matching assistant tool calls; older large tool outputs may be compacted with recovery guidance.".to_string(),
         };
         messages.insert(1, note);
         while estimate_messages_tokens(&messages) > budget && messages.len() > 2 {
@@ -1072,7 +1361,7 @@ fn _calls(_calls: Vec<StoredToolCall>) {}
 mod tests {
     use super::*;
     use crate::config::default_model_definition;
-    use serde_json::json;
+    use serde_json::{json, Value};
 
     fn small_config(context_length: u64, max_output_tokens: u64) -> Config {
         let mut config = Config::default();
@@ -1097,6 +1386,22 @@ mod tests {
             name: "read".to_string(),
             arguments: json!({"files":[{"path":path,"lines":lines}]}),
         }
+    }
+
+    fn named_call(id: &str, name: &str, arguments: Value) -> StoredToolCall {
+        StoredToolCall {
+            id: id.to_string(),
+            name: name.to_string(),
+            arguments,
+        }
+    }
+
+    fn numbered_read_output(path: &str, start: usize, end: usize) -> String {
+        let mut out = format!("--- {path} lines {start}-{end} ---\n");
+        for line in start..=end {
+            out.push_str(&format!("{line:>6} | line {line}\n"));
+        }
+        out
     }
 
     fn assert_valid_tool_structure(messages: &[ModelMessage]) {
@@ -1153,13 +1458,154 @@ mod tests {
                 ts: now_ts(),
             },
         ];
-        let messages = build_messages(&records, "system".into(), &small_config(8_000, 512));
+        let mut config = small_config(8_000, 512);
+        config.model_tool_result_limit = 100_000;
+        let messages = build_messages(&records, "system".into(), &config);
 
         assert_valid_tool_structure(&messages);
         assert!(messages.iter().any(|message| matches!(
             message,
             ModelMessage::Tool { content, .. } if content.contains("Cass compacted this tool output")
         )));
+    }
+
+    #[test]
+    fn compacted_read_output_includes_range_and_reinspection_guidance() {
+        let call = call_with_lines("call_1", "src/app.rs", "1-200");
+        let content = numbered_read_output("src/app.rs", 1, 200);
+
+        let compacted = format_tool_output_transform(
+            "read",
+            Some(&call),
+            &content,
+            320,
+            ToolOutputTransform::Compaction,
+        );
+
+        assert!(compacted.contains("Cass compacted this tool output"));
+        assert!(compacted.contains("Tool: `read`"));
+        assert!(compacted.contains("Retained excerpt shape"));
+        assert!(compacted.contains("src/app.rs lines 1-200"));
+        assert!(compacted.contains("narrower line range"));
+        assert!(compacted.contains("grep"));
+        assert!(compacted.contains("--- retained head excerpt ---"));
+        assert!(compacted.contains("--- retained tail excerpt ---"));
+    }
+
+    #[test]
+    fn compacted_multi_file_read_output_summarizes_sections() {
+        let call = named_call(
+            "call_1",
+            "read",
+            json!({"files":[
+                {"path":"src/a.rs","lines":"1-80"},
+                {"path":"src/b.rs","lines":"20-90"}
+            ]}),
+        );
+        let content = format!(
+            "{}{}",
+            numbered_read_output("src/a.rs", 1, 80),
+            numbered_read_output("src/b.rs", 20, 90)
+        );
+
+        let compacted = format_tool_output_transform(
+            "read",
+            Some(&call),
+            &content,
+            360,
+            ToolOutputTransform::Compaction,
+        );
+
+        assert!(compacted.contains("2 read sections"));
+        assert!(compacted.contains("src/a.rs lines 1-80"));
+        assert!(compacted.contains("src/b.rs lines 20-90"));
+    }
+
+    #[test]
+    fn compacted_grep_output_adds_narrowing_guidance() {
+        let call = named_call(
+            "call_1",
+            "grep",
+            json!({"query":"needle","paths":["src"],"max_matches":300}),
+        );
+        let mut content = String::new();
+        for line in 1..=300 {
+            content.push_str(&format!("src/lib.rs:{line}: needle {line}\n"));
+        }
+        content.push_str("… stopped after 300 matches. Narrow the query or raise max_matches.\n");
+
+        let compacted = format_tool_output_transform(
+            "grep",
+            Some(&call),
+            &content,
+            240,
+            ToolOutputTransform::Compaction,
+        );
+
+        assert!(compacted.contains("Tool: `grep`"));
+        assert!(compacted.contains("stopped after 300 matches"));
+        assert!(compacted.contains("narrower query/path"));
+        assert!(compacted.contains("read` around specific matching lines"));
+    }
+
+    #[test]
+    fn compacted_shell_output_mentions_command_and_narrowing() {
+        let call = named_call(
+            "call_1",
+            "shell",
+            json!({"command":"cargo test --locked --all-targets"}),
+        );
+        let content = format!("stdout:\n{}\nexit code: 0\n", "test output\n".repeat(200));
+
+        let compacted = format_tool_output_transform(
+            "shell",
+            Some(&call),
+            &content,
+            240,
+            ToolOutputTransform::Compaction,
+        );
+
+        assert!(compacted.contains("Tool: `shell`"));
+        assert!(compacted.contains("Shell command: `cargo test --locked --all-targets`"));
+        assert!(compacted.contains("filter output with grep/head/tail"));
+        assert!(compacted.contains("before making edits from omitted lines"));
+    }
+
+    #[test]
+    fn model_tool_result_limit_is_model_facing_only() {
+        let original = numbered_read_output("src/main.rs", 1, 120);
+        let records = vec![
+            Record::Assistant {
+                content: String::new(),
+                reasoning: String::new(),
+                reasoning_field: None,
+                tool_calls: vec![call_with_lines("call_1", "src/main.rs", "1-120")],
+                ts: now_ts(),
+            },
+            Record::Tool {
+                tool_call_id: "call_1".into(),
+                name: "read".into(),
+                ok: true,
+                content: original.clone(),
+                ts: now_ts(),
+            },
+        ];
+        let mut config = Config::default();
+        config.model_tool_result_limit = 180;
+
+        let messages = build_messages(&records, "system".into(), &config);
+
+        assert_valid_tool_structure(&messages);
+        assert!(messages.iter().any(|message| matches!(
+            message,
+            ModelMessage::Tool { content, .. }
+                if content.contains("Cass truncated this tool output")
+                    && content.contains("src/main.rs lines 1-120")
+        )));
+        assert!(matches!(
+            &records[1],
+            Record::Tool { content, .. } if content == &original
+        ));
     }
 
     #[test]

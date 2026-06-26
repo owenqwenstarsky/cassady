@@ -1,7 +1,7 @@
 use super::types::{CompletionResult, ModelMessage};
 use crate::agent::AgentEvent;
 use crate::codex_auth::load_codex_access_token;
-use crate::config::{ReasoningEffort, CHATGPT_CODEX_RESPONSES_URL};
+use crate::config::{ReasoningEffort, CHATGPT_CODEX_DEFAULT_MODEL, CHATGPT_CODEX_RESPONSES_URL};
 use crate::conversation::StoredToolCall;
 use crate::tools::ToolSpec;
 use anyhow::{bail, Result};
@@ -194,13 +194,21 @@ fn responses_body(
         body["instructions"] = Value::String(instructions.join("\n\n"));
     }
     if fast_mode {
-        body["reasoning"] = json!({"effort": "minimal", "summary": "auto"});
+        body["reasoning"] = json!({"effort": fast_mode_reasoning_effort(model), "summary": "auto"});
     } else if let Some(effort) = reasoning_effort.request_value() {
         body["reasoning"] = json!({"effort": effort, "summary": "auto"});
     } else if reasoning_effort == ReasoningEffort::Off {
         body["reasoning"] = json!({"effort": "none", "summary": "auto"});
     }
     body
+}
+
+fn fast_mode_reasoning_effort(model: &str) -> &'static str {
+    if model == CHATGPT_CODEX_DEFAULT_MODEL {
+        "low"
+    } else {
+        "minimal"
+    }
 }
 
 fn tools_to_responses(tools: Vec<ToolSpec>) -> Vec<Value> {
@@ -489,7 +497,25 @@ mod tests {
     }
 
     #[test]
-    fn responses_body_uses_minimal_reasoning_for_fast_mode() {
+    fn responses_body_uses_low_reasoning_for_gpt_5_5_fast_mode() {
+        let body = responses_body(
+            CHATGPT_CODEX_DEFAULT_MODEL,
+            vec![ModelMessage::User {
+                content: "hello".into(),
+            }],
+            Vec::new(),
+            ReasoningEffort::High,
+            true,
+        );
+
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "low", "summary": "auto"})
+        );
+    }
+
+    #[test]
+    fn responses_body_keeps_minimal_reasoning_for_other_fast_mode_models() {
         let body = responses_body(
             "gpt-test",
             vec![ModelMessage::User {

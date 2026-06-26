@@ -31,7 +31,7 @@ fn default_max() -> usize {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "grep".into(),
-        description: "Search files or directories for literal text or regex matches. Use before read for large inputs. In read-only and workspace-edit modes, paths must stay inside the launch cwd or bundled docs directory.".into(),
+        description: "Search files or directories for literal text or regex matches. Use before read for large or unknown inputs; keep queries and paths focused, then read around matching lines. In read-only and workspace-edit modes, paths must stay inside the launch cwd or bundled docs directory.".into(),
         parameters: schema::object(json!({
             "query": {"type":"string"},
             "paths": {"type":"array", "items":{"type":"string"}, "default":["."]},

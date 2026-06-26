@@ -108,6 +108,12 @@ Cassady exposes tools according to the active access mode:
 
 Use `--readonly`, `--workspace-edit`, or `--full-access` to choose a mode at launch, or press `Shift-Tab` while idle.
 
+## Tool output and context recovery
+
+Cassady keeps tool calls reviewable while fitting provider context windows. Very large tool results may be sent to the model as compacted or truncated head/tail excerpts with a note that names the tool, retained excerpt shape, file ranges or command provenance when available, and suggested follow-up reads/searches. Treat those notes as incomplete evidence: ask Cass to re-read a narrower line range, run a focused `grep`, or rerun a narrower shell command before editing from omitted details.
+
+Conversation files keep the recorded tool result content; model-facing compaction happens when preparing provider messages. The compact/full tool-output UI toggle only changes display.
+
 ## Branch and restore
 
 Press `Esc` twice while idle, or type `/branch`, to browse the current conversation's branch family. Selecting an earlier user message, assistant message, tool call, or tool result creates a new branch conversation instead of truncating the original chat. The menu also lets you switch back to related branches later.

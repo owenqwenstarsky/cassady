@@ -16,7 +16,7 @@ struct Args {
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: "shell".into(),
-        description: "Run a shell command in the launch cwd. Request this tool directly when shell is useful; do not ask the user for permission in chat. Cass may show a separate approval UI before execution depending on the active access mode. Streams stdout/stderr while running, then returns stdout, stderr, and exit code. Use timeout (seconds) to limit runtime."
+        description: "Run a shell command in the launch cwd. Request this tool directly when shell is useful; do not ask the user for permission in chat. Cass may show a separate approval UI before execution depending on the active access mode. Streams stdout/stderr while running, then returns stdout, stderr, and exit code. Use timeout (seconds) to limit runtime. Prefer narrow commands or filtering (grep/head/tail) for broad output, and rerun narrower commands if prior output was compacted or truncated."
             .into(),
         parameters: schema::object(
             json!({

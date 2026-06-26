@@ -60,7 +60,7 @@ Fields:
 - `default_fast_mode`: optional boolean, defaults to `false`. When `true`, Cassady requests faster inference only for provider/model combinations that advertise fast-mode support.
 - `default_access_mode`: `"read-only"`, `"workspace-edit"`, or `"full-access"`.
 - `context_message_limit`: optional legacy upper bound for recent non-system messages. Cassady primarily budgets context from model metadata and trims along valid tool-call boundaries.
-- `model_tool_result_limit`: optional max bytes of tool output sent back to the model.
+- `model_tool_result_limit`: optional approximate max characters of each tool output sent back to the model. Larger results are model-facing head/tail excerpts with recovery guidance; conversation records keep the tool result content.
 - `ui_tool_result_limit`: optional max bytes of tool output shown in the UI unless full output is toggled.
 - `show_reasoning`: optional boolean, defaults to `false`. Shows provider-streamed reasoning in the transcript.
 - `confirm_destructive_operations`: optional compatibility preference currently stored in config.

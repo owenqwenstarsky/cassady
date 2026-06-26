@@ -29,7 +29,25 @@ Start in read-only mode or press `Shift-Tab` until the status shows `read-only`.
 Find where configuration is loaded and summarize the precedence rules.
 ```
 
-Cassady can use `ls`, `read`, and `grep` to inspect the workspace and bundled docs.
+Cassady can use `ls`, `read`, and `grep` to inspect the workspace and bundled docs. For large files or unknown locations, prefer a search-first flow: `grep` for a symbol or phrase, then `read` a small line range around the relevant match.
+
+## Recover from compacted or truncated output
+
+When a tool result is too large for the model context, Cassady sends the model a head/tail excerpt with a recovery note. The note includes the tool name, retained excerpt shape, and file range or shell-command provenance when available.
+
+If Cassady reports compacted or truncated output, do not rely on omitted lines for edits. Ask Cass to narrow the inspection instead:
+
+```text
+Re-read src/app.rs lines 220-280 before editing that function.
+```
+
+```text
+Search only src/ for "load_config" and then read around the matching lines.
+```
+
+```text
+Rerun the test command with a focused package/filter, or pipe the noisy output through grep/head/tail.
+```
 
 ## Apply a focused edit
 

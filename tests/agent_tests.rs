@@ -369,6 +369,86 @@ async fn empty_final_response_is_reprompted_and_persisted() {
 }
 
 #[tokio::test]
+async fn tool_results_are_stored_full_but_sent_to_model_with_limit_guidance() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("Cass truncated this tool output"))
+        .and(body_string_contains("large.txt lines 1-200"))
+        .respond_with(sse(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Done.\"}}]}\r\n\r\ndata: [DONE]\r\n\r\n",
+        ))
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(tool_call_sse(
+            "call_read",
+            "read",
+            r#"{"files":[{"path":"large.txt"}]}"#,
+        ))
+        .with_priority(10)
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let root = tempdir().unwrap();
+    let cwd = tempdir().unwrap();
+    let docs = tempdir().unwrap();
+    let large = (1..=200)
+        .map(|line| format!("line {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(cwd.path().join("large.txt"), large).unwrap();
+    let config = Config {
+        root: root.path().to_path_buf(),
+        docs_dir: docs.path().to_path_buf(),
+        model: "test-model".into(),
+        model_tool_result_limit: 180,
+        active_provider: cassady::config::ResolvedProviderConfig {
+            base_url: server.uri(),
+            api_key: "test-key".into(),
+            ..Config::default().active_provider
+        },
+        ..Config::default()
+    };
+    let conversation = Conversation::create(
+        &config.conversations_dir(),
+        &config.model,
+        cwd.path(),
+        "base prompt".into(),
+    )
+    .unwrap();
+    let (tx, _rx) = mpsc::unbounded_channel::<AgentEvent>();
+
+    let updated = run_turn(
+        conversation,
+        "read the large file".into(),
+        AgentSettings {
+            config,
+            cwd: cwd.path().to_path_buf(),
+            mode: AccessMode::ReadOnly,
+            reasoning_effort: ReasoningEffort::Off,
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+
+    assert!(updated.records.iter().any(|record| matches!(
+        record,
+        Record::Tool { name, content, .. }
+            if name == "read"
+                && content.contains("line 200")
+                && !content.contains("Cass truncated this tool output")
+    )));
+}
+
+#[tokio::test]
 async fn workspace_edit_shell_does_not_execute_until_approved() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))

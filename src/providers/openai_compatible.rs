@@ -342,10 +342,7 @@ mod tests {
             ReasoningRequestFormat::ReasoningEffort,
             true,
         );
-        assert_eq!(
-            body["reasoning_effort"],
-            Value::String("none".to_string())
-        );
+        assert_eq!(body["reasoning_effort"], Value::String("none".to_string()));
     }
 
     #[test]

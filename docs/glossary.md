@@ -12,6 +12,8 @@
 
 **Config root**: The `~/.cass` directory containing config, conversations, global instructions, and installed docs.
 
+**Compacted tool output**: A model-facing replacement for a large tool result that keeps a head/tail excerpt plus provenance and recovery guidance so the assistant can re-read or re-search narrowly before relying on omitted details.
+
 **Exact edit**: An `edit` tool replacement where each `old_text` must match exactly once in the original file before anything is written.
 
 **Fast mode**: A saved preference enabled with `/fast`. It is active only when the current provider/model advertises fast-mode support; otherwise Cassady keeps the preference but reports it as unavailable.
@@ -27,5 +29,7 @@
 **Reasoning effort**: Runtime setting (`off`, `low`, `medium`, `high`) used for models with reasoning support. Press `Tab` while idle to cycle it.
 
 **Tool call**: A model-requested operation such as `ls`, `read`, `grep`, `write`, `edit`, or `shell`.
+
+**Truncated tool output**: A model-facing shortened tool result produced when output exceeds `model_tool_result_limit`. Cassady tells the model that output was incomplete and suggests narrower follow-up inspection.
 
 **Workspace**: The launch cwd, either the current directory or the path passed with `--cwd`. In workspace-edit mode, writes must stay inside this root.
