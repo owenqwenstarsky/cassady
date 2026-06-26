@@ -1,5 +1,35 @@
 # Cassady (Cass) Roadmap
 
+## v0.3.3 — Tool Output Context Reliability
+
+This release focuses on making large tool outputs easier for the assistant to recover from when model-context compaction or truncation hides important details. Cassady should guide the assistant toward smaller, targeted reads and searches, preserve enough provenance for follow-up inspection, and add regression coverage for broad-output workflows that previously stalled safe edits. See `plans/V0_3_3_TOOL_OUTPUT_CONTEXT_RELIABILITY_PLAN.md`.
+
+### Model Context Recovery
+
+- [ ] **Improve compacted tool-output guidance.** Replace generic head/tail compaction notices with actionable guidance that tells the assistant what was omitted and how to inspect it again safely.
+  - Include tool name, output size, retained excerpt shape, and suggested narrower follow-up reads or searches when available.
+  - Keep model-facing guidance concise enough that it does not worsen context pressure.
+
+- [ ] **Preserve targeted reinspection metadata.** Track enough structured context for large reads and command output so the assistant can recover omitted details without repeating broad requests.
+  - For file reads, preserve path and line-range coverage even after compaction.
+  - For shell and search output, prefer guidance toward narrower commands or `grep`/`read` follow-ups rather than blindly rerunning the same broad command.
+
+### Tool Behavior and Prompting
+
+- [ ] **Bias tool use toward smaller inspections.** Update tool descriptions, prompt guidance, and result messages so broad reads become a fallback rather than the default.
+  - Encourage search-first workflows for large files and unknown locations.
+  - Mention result limits before or at truncation points so the assistant knows when context may be incomplete.
+
+- [ ] **Make truncation and compaction visible across layers.** Align model-facing messages, stored conversation records, and UI summaries so users and the assistant can tell when output was incomplete.
+  - Do not let UI-only collapsed output change what is stored or sent to the model.
+  - Keep existing conversation files readable and resumable.
+
+### Validation
+
+- [ ] **Add regression coverage for broad-output recovery.** Test workflows where an early broad read or command output is compacted before the assistant needs exact context for an edit.
+  - Cover superseded reads, compacted non-newest tool outputs, provider-message validity, and suggested follow-up guidance.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
+
 ## v0.3.2 — Provider Fast Mode
 
 This release focuses on adding a `/fast` command that lets users prefer faster inference when the active provider/model supports it. The first supported provider is `ChatGPT Codex`; other providers can add their own fast-mode request behavior later without changing the user-facing command. See `plans/V0_3_2_FAST_MODE_PLAN.md`.
@@ -450,13 +480,6 @@ This release focuses on making Cass easier to interrupt, easier to audit, and sa
 ## Planned within the next major release
 
 These sections describe work Cassady intends to complete before or as part of the next major release, but which has not yet been assigned to a specific version. Scope, order, and version numbers may change.
-
-### Tool Output Context Reliability
-
-- [ ] **Reduce tool-output compaction stalls.** Make large file reads and command output easier to recover from when output is compacted or truncated, so the assistant can quickly switch to targeted inspection instead of getting stuck.
-  - Prefer smaller, focused file ranges and search-first workflows when large outputs are likely.
-  - Surface clearer guidance when tool results are compacted, including suggested narrower follow-up reads.
-  - Add regression coverage or dogfood checks for workflows where broad reads previously obscured the context needed for safe edits.
 
 ### Windows CLI Usability
 
