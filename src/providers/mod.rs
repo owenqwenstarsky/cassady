@@ -28,11 +28,13 @@ impl ProviderClient {
         match config.active_provider.kind.as_str() {
             DEFAULT_PROVIDER_KIND => {
                 let api_key = config.resolved_api_key()?;
-                let reasoning_request_format = config
-                    .model_metadata
-                    .as_ref()
+                let model_metadata = config.model_metadata.as_ref();
+                let reasoning_request_format = model_metadata
                     .map(|model| model.reasoning.request_format)
                     .unwrap_or_default();
+                let reasoning_supported = model_metadata
+                    .map(|model| model.reasoning.supported)
+                    .unwrap_or(false);
                 Ok(Self::OpenAiCompatible(OpenAiCompatibleProvider::new(
                     OpenAiCompatibleSettings {
                         model: config.model.clone(),
@@ -40,6 +42,7 @@ impl ProviderClient {
                         api_key,
                         reasoning_effort: options.reasoning_effort,
                         reasoning_request_format,
+                        reasoning_supported,
                     },
                 )))
             }

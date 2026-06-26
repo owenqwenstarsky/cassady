@@ -18,6 +18,7 @@ pub struct OpenAiCompatibleProvider {
     api_key: String,
     reasoning_effort: ReasoningEffort,
     reasoning_request_format: ReasoningRequestFormat,
+    reasoning_supported: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ pub struct OpenAiCompatibleSettings {
     pub api_key: String,
     pub reasoning_effort: ReasoningEffort,
     pub reasoning_request_format: ReasoningRequestFormat,
+    pub reasoning_supported: bool,
 }
 
 #[derive(Debug, Default)]
@@ -45,6 +47,7 @@ impl OpenAiCompatibleProvider {
             api_key: settings.api_key,
             reasoning_effort: settings.reasoning_effort,
             reasoning_request_format: settings.reasoning_request_format,
+            reasoning_supported: settings.reasoning_supported,
         }
     }
 
@@ -65,6 +68,7 @@ impl OpenAiCompatibleProvider {
             &mut body,
             self.reasoning_effort,
             self.reasoning_request_format,
+            self.reasoning_supported,
         );
         let resp = self
             .client
@@ -219,9 +223,17 @@ fn apply_reasoning_request(
     body: &mut Value,
     effort: ReasoningEffort,
     format: ReasoningRequestFormat,
+    supported: bool,
 ) {
-    let Some(effort) = effort.request_value() else {
+    if !supported {
         return;
+    }
+    let effort_str = match effort {
+        ReasoningEffort::Off => "none",
+        _ => match effort.request_value() {
+            Some(value) => value,
+            None => return,
+        },
     };
     let Value::Object(obj) = body else {
         return;
@@ -230,11 +242,11 @@ fn apply_reasoning_request(
         ReasoningRequestFormat::ReasoningEffort => {
             obj.insert(
                 "reasoning_effort".to_string(),
-                Value::String(effort.to_string()),
+                Value::String(effort_str.to_string()),
             );
         }
         ReasoningRequestFormat::ReasoningObject => {
-            obj.insert("reasoning".to_string(), json!({ "effort": effort }));
+            obj.insert("reasoning".to_string(), json!({ "effort": effort_str }));
         }
     }
 }
@@ -314,5 +326,62 @@ fn chat_url(base: &str) -> String {
         base.to_string()
     } else {
         format!("{}/chat/completions", base.trim_end_matches('/'))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_effort_format_sends_none_when_off_and_supported() {
+        let mut body = json!({"model": "test"});
+        apply_reasoning_request(
+            &mut body,
+            ReasoningEffort::Off,
+            ReasoningRequestFormat::ReasoningEffort,
+            true,
+        );
+        assert_eq!(
+            body["reasoning_effort"],
+            Value::String("none".to_string())
+        );
+    }
+
+    #[test]
+    fn reasoning_object_format_sends_none_when_off_and_supported() {
+        let mut body = json!({"model": "test"});
+        apply_reasoning_request(
+            &mut body,
+            ReasoningEffort::Off,
+            ReasoningRequestFormat::ReasoningObject,
+            true,
+        );
+        assert_eq!(body["reasoning"], json!({ "effort": "none" }));
+    }
+
+    #[test]
+    fn reasoning_sends_nothing_when_unsupported_even_if_off() {
+        let mut body = json!({"model": "test"});
+        apply_reasoning_request(
+            &mut body,
+            ReasoningEffort::Off,
+            ReasoningRequestFormat::ReasoningEffort,
+            false,
+        );
+        assert!(body.get("reasoning_effort").is_none());
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn reasoning_sends_nothing_when_unsupported_even_if_high() {
+        let mut body = json!({"model": "test"});
+        apply_reasoning_request(
+            &mut body,
+            ReasoningEffort::High,
+            ReasoningRequestFormat::ReasoningObject,
+            false,
+        );
+        assert!(body.get("reasoning").is_none());
     }
 }

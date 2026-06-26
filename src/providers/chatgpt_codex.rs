@@ -197,6 +197,8 @@ fn responses_body(
         body["reasoning"] = json!({"effort": "minimal", "summary": "auto"});
     } else if let Some(effort) = reasoning_effort.request_value() {
         body["reasoning"] = json!({"effort": effort, "summary": "auto"});
+    } else if reasoning_effort == ReasoningEffort::Off {
+        body["reasoning"] = json!({"effort": "none", "summary": "auto"});
     }
     body
 }
@@ -501,6 +503,24 @@ mod tests {
         assert_eq!(
             body["reasoning"],
             json!({"effort": "minimal", "summary": "auto"})
+        );
+    }
+
+    #[test]
+    fn responses_body_sends_none_effort_when_reasoning_is_off() {
+        let body = responses_body(
+            "gpt-test",
+            vec![ModelMessage::User {
+                content: "hello".into(),
+            }],
+            Vec::new(),
+            ReasoningEffort::Off,
+            false,
+        );
+
+        assert_eq!(
+            body["reasoning"],
+            json!({"effort": "none", "summary": "auto"})
         );
     }
 
