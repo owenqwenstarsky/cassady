@@ -47,6 +47,7 @@ fn default_provider_and_model_files_are_created() {
             .unwrap();
     assert_eq!(models.models[0].provider, "fireworks");
     assert!(models.models[0].reasoning.supported);
+    assert!(!models.models[0].fast_mode.supported);
     assert_eq!(
         models.models[0].reasoning.default_effort,
         ReasoningEffort::Medium
@@ -128,6 +129,116 @@ fn reasoning_defaults_to_supported_medium_for_model_metadata() {
 }
 
 #[test]
+fn fast_mode_defaults_to_off_and_unsupported() {
+    let model: config::ModelDefinition = serde_json::from_str(
+        r#"{
+  "id": "test-model",
+  "provider": "test-provider"
+}
+"#,
+    )
+    .unwrap();
+
+    assert!(!model.fast_mode.supported);
+
+    let root = tempdir().unwrap();
+    let cfg = Config::load_from_root_with_docs(
+        root.path().to_path_buf(),
+        root.path().join("docs"),
+        &cli(),
+    )
+    .unwrap();
+    let state = cfg.fast_mode_state();
+    assert!(!state.preferred);
+    assert!(!state.supported);
+    assert!(!state.active);
+}
+
+#[test]
+fn fast_mode_preference_persists_without_losing_config_fields() {
+    let root = tempdir().unwrap();
+    std::fs::write(
+        root.path().join("config.json"),
+        r#"{
+  "default_access_mode": "workspace-edit",
+  "show_reasoning": true
+}
+"#,
+    )
+    .unwrap();
+
+    config::save_fast_mode_preference(root.path(), true).unwrap();
+
+    let cfg = Config::load_from_root_with_docs(
+        root.path().to_path_buf(),
+        root.path().join("docs"),
+        &cli(),
+    )
+    .unwrap();
+    assert!(cfg.default_fast_mode);
+    assert!(cfg.show_reasoning);
+    assert_eq!(cfg.default_access_mode.to_string(), "workspace-edit");
+}
+
+#[test]
+fn fast_mode_state_is_active_for_supported_codex_model() {
+    let root = tempdir().unwrap();
+    std::fs::write(
+        root.path().join("providers.json"),
+        r#"{
+  "providers": [
+    {
+      "id": "chatgpt-codex",
+      "name": "ChatGPT Codex",
+      "kind": "chatgpt-codex",
+      "base_url": "https://chatgpt.com/backend-api/codex/responses",
+      "api_key": "",
+      "default_model": "gpt-5.5",
+      "models": ["gpt-5.5"]
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("models.json"),
+        r#"{
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "provider": "chatgpt-codex",
+      "fast_mode": { "supported": true }
+    }
+  ]
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.path().join("config.json"),
+        r#"{
+  "default_provider": "chatgpt-codex",
+  "default_model": "gpt-5.5",
+  "default_fast_mode": true
+}
+"#,
+    )
+    .unwrap();
+
+    let cfg = Config::load_from_root_with_docs(
+        root.path().to_path_buf(),
+        root.path().join("docs"),
+        &cli(),
+    )
+    .unwrap();
+    let state = cfg.fast_mode_state();
+    assert!(state.preferred);
+    assert!(state.supported);
+    assert!(state.active);
+}
+
+#[test]
 fn validation_accepts_chatgpt_codex_without_api_key() {
     let providers = ProvidersFile {
         providers: vec![ProviderDefinition {
@@ -150,6 +261,7 @@ fn validation_accepts_chatgpt_codex_without_api_key() {
             supports_tools: true,
             supports_streaming: true,
             reasoning: Default::default(),
+            fast_mode: Default::default(),
         }],
     };
 

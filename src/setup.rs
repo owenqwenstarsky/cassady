@@ -2,10 +2,10 @@ use crate::check;
 use crate::cli::Cli;
 use crate::codex_auth;
 use crate::config::{
-    self, ConfigFile, ModelDefinition, ModelsFile, ProviderDefinition, ProvidersFile,
-    ReasoningEffort, ReasoningMetadata, ReasoningRequestFormat, CHATGPT_CODEX_DEFAULT_MODEL,
-    CHATGPT_CODEX_PROVIDER_ID, CHATGPT_CODEX_PROVIDER_KIND, CHATGPT_CODEX_PROVIDER_NAME,
-    CHATGPT_CODEX_RESPONSES_URL, DEFAULT_PROVIDER_KIND,
+    self, ConfigFile, FastModeMetadata, ModelDefinition, ModelsFile, ProviderDefinition,
+    ProvidersFile, ReasoningEffort, ReasoningMetadata, ReasoningRequestFormat,
+    CHATGPT_CODEX_DEFAULT_MODEL, CHATGPT_CODEX_PROVIDER_ID, CHATGPT_CODEX_PROVIDER_KIND,
+    CHATGPT_CODEX_PROVIDER_NAME, CHATGPT_CODEX_RESPONSES_URL, DEFAULT_PROVIDER_KIND,
 };
 use crate::menu::{Menu, MenuItem, TextPrompt};
 use anyhow::{bail, Context, Result};
@@ -969,6 +969,9 @@ fn upsert_model(models: &mut ModelsFile, selection: &SetupSelection) {
                 ReasoningEffort::Off
             },
             request_format: ReasoningRequestFormat::ReasoningEffort,
+        },
+        fast_mode: FastModeMetadata {
+            supported: is_chatgpt_codex_provider(&selection.provider_id),
         },
     };
 

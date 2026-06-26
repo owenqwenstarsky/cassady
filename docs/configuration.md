@@ -42,6 +42,7 @@ Example:
   "default_provider": "openai",
   "default_model": "gpt-4.1",
   "default_reasoning_effort": "medium",
+  "default_fast_mode": false,
   "default_access_mode": "read-only",
   "context_message_limit": 80,
   "model_tool_result_limit": 24000,
@@ -56,6 +57,7 @@ Fields:
 - `default_provider`: optional provider id from `providers.json`. If omitted, Cassady infers the provider from `default_model` when possible.
 - `default_model`: optional model id to use by default.
 - `default_reasoning_effort`: optional `off`, `low`, `medium`, or `high`, clamped to model metadata.
+- `default_fast_mode`: optional boolean, defaults to `false`. When `true`, Cassady requests faster inference only for provider/model combinations that advertise fast-mode support.
 - `default_access_mode`: `"read-only"`, `"workspace-edit"`, or `"full-access"`.
 - `context_message_limit`: optional legacy upper bound for recent non-system messages. Cassady primarily budgets context from model metadata and trims along valid tool-call boundaries.
 - `model_tool_result_limit`: optional max bytes of tool output sent back to the model.
@@ -136,6 +138,9 @@ Example:
         "required": false,
         "default_effort": "medium",
         "request_format": "reasoning_effort"
+      },
+      "fast_mode": {
+        "supported": false
       }
     }
   ]
@@ -156,8 +161,12 @@ Fields:
   - `required`: optional boolean, defaults to `false`.
   - `default_effort`: optional `off`, `low`, `medium`, or `high`; defaults to `medium`. Cannot effectively be `off` when `required` is `true`.
   - `request_format`: optional `reasoning_effort` or `reasoning_object`; defaults to `reasoning_effort`.
+- `fast_mode`: optional object. Defaults to unsupported.
+  - `supported`: optional boolean, defaults to `false`. Setup marks ChatGPT Codex model entries as supported; custom and OpenAI-compatible model entries default to unsupported.
 
 Reasoning effort is a runtime per-turn setting. Press `Tab` to cycle it while idle. Provider-streamed reasoning is persisted and sent back in future model context using the provider's reasoning field, such as `reasoning_content` or `reasoning`.
+
+Fast mode is a persisted preference, not a guarantee. Use `/fast` to toggle it while idle. `/status` shows `enabled` only when the preference is on and the current provider/model can honor it; otherwise it reports `off` or `preferred, unavailable ...`. In v0.3.2, fast-mode request shaping is implemented only for `chatgpt-codex`.
 
 ## Precedence
 

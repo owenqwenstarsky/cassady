@@ -53,6 +53,7 @@ pub struct RenderState<'a> {
     pub show_full_tools: bool,
     pub show_reasoning: bool,
     pub reasoning_effort: ReasoningEffort,
+    pub fast_mode_active: bool,
     pub scroll: u16,
     pub autofill: Option<&'a AutoFillMenu>,
     pub overlay: Option<&'a OverlayView>,
@@ -724,6 +725,9 @@ fn footer_text(state: &RenderState<'_>) -> String {
         parts.push("tools:full".into());
     }
     parts.push(format!("reasoning:{}", state.reasoning_effort));
+    if state.fast_mode_active {
+        parts.push("fast".into());
+    }
     if state.show_reasoning {
         parts.push("reasoning:visible".into());
     }

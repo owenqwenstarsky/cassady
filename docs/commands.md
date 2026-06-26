@@ -107,12 +107,13 @@ The updater does not invoke `sudo` or administrator prompts. If the install dire
 Type `/` to open command autocomplete.
 
 - `/branch` or `/restore`: open the branch/restore menu for the current conversation family.
+- `/fast`, `/fast on`, `/fast off`, `/fast status`: toggle or inspect a persisted fast-mode preference. Fast mode is active only when the current provider/model supports it; v0.3.2 supports ChatGPT Codex models marked fast-capable.
 - `/login`: configure or update provider login settings, then reload active provider/model config.
 - `/logout`: remove saved providers and their associated models, then reload active provider/model config when any remain.
 - `/model <model>`: switch the model for future turns. Autocomplete lists models from `~/.cass/models.json`.
 - `/new`: create a new chat for the current directory.
 - `/resume <chat>`: resume a saved chat from the current directory. Autocomplete lists matching chats.
-- `/status`: show chat id, state, model, access mode, cwd, record count, and current status.
+- `/status`: show chat id, state, model, fast-mode state, access mode, cwd, record count, and current status.
 
 Local commands can be used only when the agent is idle.
 

@@ -95,13 +95,25 @@ Inside a chat:
 /model MODEL_ID
 ```
 
-Autocomplete lists models from `~/.cass/models.json`. Switching models is allowed only when idle. Cassady persists the last used model and reasoning effort into `config.json`.
+Autocomplete lists models from `~/.cass/models.json`. Switching models is allowed only when idle. Cassady persists the last used provider, model, and reasoning effort into `config.json`.
 
 You can also launch with a model override:
 
 ```sh
 cass --model MODEL_ID
 ```
+
+## Prefer fast mode
+
+Inside a chat:
+
+```text
+/fast
+```
+
+Use `/fast on`, `/fast off`, or `/fast status` when you want an explicit action. Cassady saves the preference in `config.json`, but fast mode is active only when the current provider/model supports it. In v0.3.2, support is implemented for ChatGPT Codex model entries marked with `fast_mode.supported`.
+
+Switching to an unsupported provider/model keeps the preference but makes `/status` show fast mode as unavailable. Switching back to a supported ChatGPT Codex model enables it again.
 
 ## Resume a chat
 
