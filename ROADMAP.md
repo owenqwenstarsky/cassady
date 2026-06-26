@@ -47,7 +47,7 @@ This release focuses on sending the correct reasoning effort value when a reason
 - [x] **Add regression coverage for reasoning-off requests.** Test that supported models send `none` when reasoning is off across both provider kinds and both request formats, and that unsupported models send no reasoning field.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 
-## v0.3.3 — Codex Fast-Mode Compatibility
+## v0.3.3 — Codex Fast-Mode Compatibility ✅ Completed
 
 This release focuses on keeping fast mode available for ChatGPT Codex users when local model metadata predates the fast-mode capability flag. Cassady should treat active `chatgpt-codex` provider models, including `gpt-5.5`, as fast-capable while leaving OpenAI-compatible and custom providers capability-gated by model metadata.
 
@@ -63,7 +63,7 @@ This release focuses on keeping fast mode available for ChatGPT Codex users when
 - [x] **Add regression coverage for legacy metadata.** Test that a ChatGPT Codex model with older `fast_mode.supported: false` metadata still reports fast mode as supported and active when preferred.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 
-## v0.3.2 — Provider Fast Mode
+## v0.3.2 — Provider Fast Mode ✅ Completed
 
 This release focuses on adding a `/fast` command that lets users prefer faster inference when the active provider/model supports it. The first supported provider is `ChatGPT Codex`; other providers can add their own fast-mode request behavior later without changing the user-facing command. See `plans/V0_3_2_FAST_MODE_PLAN.md`.
 
@@ -95,7 +95,7 @@ This release focuses on adding a `/fast` command that lets users prefer faster i
 - [ ] **Test fast-mode preference, switching, and provider requests.** Cover command parsing, persistence, status rendering, model/provider switching, and Codex request body behavior.
   - Verify `cargo fmt` and `cargo test --locked --all-targets` pass before handoff.
 
-## v0.3.1 — Transcript Scroll Stability
+## v0.3.1 — Transcript Scroll Stability ✅ Completed
 
 This release focuses on keeping the live transcript anchored correctly above the input and footer during long sessions with blank reasoning or tool-output lines.
 
