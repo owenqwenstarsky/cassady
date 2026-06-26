@@ -199,6 +199,63 @@ gh release view "$TAG" --repo owenqwenstarsky/cassady --json tagName,name,isDraf
 
 Do **not** publish the draft or mark it as the final/latest release unless the user explicitly asks.
 
+## NPM package process: prepare and publish the CLI packages
+
+Use this process when preparing Cassady for npm. The npm distribution is a tiny wrapper package plus platform-specific binary packages. Do not publish to npm unless the user explicitly asks; when they ask for a publish-ready setup, make sure the packages can be published with one command.
+
+### Package layout and names
+
+The committed npm tooling generates packages under `dist/npm/` from the current Rust version in `Cargo.toml`:
+
+- Wrapper package: `cassady`
+  - Exposes both npm binaries: `cass` and `cassady`.
+  - Depends on the platform packages through `optionalDependencies` at the exact same version.
+- Platform packages:
+  - `@cassady/cli-darwin-arm64` for `aarch64-apple-darwin`
+  - `@cassady/cli-linux-x64` for `x86_64-unknown-linux-gnu`
+  - `@cassady/cli-linux-arm64` for `aarch64-unknown-linux-gnu`
+  - `@cassady/cli-win32-x64` for `x86_64-pc-windows-gnu`
+
+Before the first publish, make sure the npm account owns or has publish access to the `cassady` package name and the `@cassady` scope. If the npm package name or scope changes, update `npm/scripts/lib/release-config.mjs` and regenerate the packages. Scoped packages are published with `--access public`.
+
+### 1. Build the release binaries first
+
+The npm packages copy binaries from `target/<target>/release/`, so run the same verification and target builds used for the GitHub release first:
+
+```sh
+cargo +stable test --locked --all-targets
+cargo +stable build --release --locked --target aarch64-apple-darwin
+cargo +stable zigbuild --release --locked --target x86_64-unknown-linux-gnu
+cargo +stable zigbuild --release --locked --target aarch64-unknown-linux-gnu
+cargo +stable zigbuild --release --locked --target x86_64-pc-windows-gnu
+```
+
+### 2. Generate and verify the npm package directories
+
+```sh
+npm run npm:prepare
+npm run npm:verify
+```
+
+`npm:prepare` rebuilds `dist/npm/` for the current `Cargo.toml` version. `npm:verify` runs `npm publish --dry-run` for each generated package and does not publish anything.
+
+### 3. Publish to npm when explicitly requested
+
+The publish command prepares packages, checks npm auth, runs `npm login` if needed, checks whether each package version already exists, publishes platform packages first, publishes the wrapper last, and verifies that the published versions can be packed from npm. The existence/verification checks intentionally use `npm pack --dry-run` instead of `npm view` because npm registry metadata for newly-created scoped packages can briefly return 404 even after publish succeeds.
+
+```sh
+npm run npm:publish
+```
+
+Optional checks and controls:
+
+```sh
+npm run npm:publish -- --dry-run   # full publish flow without publishing
+NPM_TAG=next npm run npm:publish    # publish under a non-latest dist-tag
+```
+
+If a version already exists, npm cannot overwrite it. Stop and ask before changing versions, deleting packages, or moving dist-tags.
+
 ## Roadmap process: write a new release entry in `ROADMAP.md`
 
 Use this process when planning a future Cassady release. Follow the existing newest-first format in `ROADMAP.md` so new entries look like prior releases.

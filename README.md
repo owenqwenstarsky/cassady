@@ -13,10 +13,12 @@ The project installs two equivalent commands, `cass` and `cassady`; examples use
 - Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
 - `cass update` can update release-archive installs from official GitHub releases; external package managers should still be updated through their own tools.
 
-## Install from source
+## Install with npm
+
+The recommended installation method is npm:
 
 ```sh
-cargo install --path .
+npm install -g cassady
 ```
 
 This installs both commands:
@@ -24,6 +26,14 @@ This installs both commands:
 ```sh
 cass --version
 cassady --version
+```
+
+The npm package installs a small launcher plus the matching Rust-built binary package for your platform. Supported npm platforms are macOS Apple Silicon, Linux x86_64, Linux ARM64, and Windows x86_64.
+
+## Install from source
+
+```sh
+cargo install --path .
 ```
 
 ## First use

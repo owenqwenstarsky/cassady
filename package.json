@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "scripts": {
+    "npm:prepare": "node npm/scripts/prepare-release.mjs",
+    "npm:verify": "node npm/scripts/verify-release.mjs",
+    "npm:publish": "node npm/scripts/publish-release.mjs"
+  }
+}
