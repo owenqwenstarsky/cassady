@@ -1,8 +1,8 @@
-# v0.3.4 Tool Output Context Reliability Implementation Plan
+# v0.3.5 Tool Output Context Reliability Implementation Plan
 
 ## Goal
 
-v0.3.4 makes Cassady more reliable after broad tool output has been truncated, compacted, or superseded in the model context. The assistant should be able to tell when details are missing, understand which file range or command produced them, and quickly recover by using narrower reads or searches instead of stalling or making unsafe edits from incomplete context.
+v0.3.5 makes Cassady more reliable after broad tool output has been truncated, compacted, or superseded in the model context. The assistant should be able to tell when details are missing, understand which file range or command produced them, and quickly recover by using narrower reads or searches instead of stalling or making unsafe edits from incomplete context.
 
 Success statement:
 
