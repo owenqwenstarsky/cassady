@@ -37,9 +37,9 @@ From the repository root:
 ```sh
 cd cassady-desktop
 npm install
-cargo tauri build --target aarch64-apple-darwin
+cargo tauri build --target aarch64-apple-darwin --no-bundle -- --locked
 ```
 
-`cargo tauri build` runs the frontend build and embeds the generated assets into the standalone binary. A plain `cargo build -p cassady-desktop` is useful for Rust checks, but do not package that output because it may run in Tauri dev-asset mode and open to a blank window when copied elsewhere.
+`cargo tauri build` runs the frontend build and embeds the generated assets into the standalone binary. Release Cargo builds now fail fast when `cassady-desktop/dist` is missing or incomplete, and `cass desktop` rejects desktop binaries that do not contain the bundled frontend assets. A plain debug `cargo build -p cassady-desktop` is useful for Rust checks, but do not package that output.
 
 For a GUI dev session, run the Vite dev server and the Tauri app using your local Tauri workflow. Release packaging uses the raw `cassady-desktop` binary, not DMG, app bundle, AppImage, MSI, or other installer artifacts.

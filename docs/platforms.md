@@ -59,7 +59,7 @@ That directory contains `config.json`, `providers.json`, `models.json`, `global.
 
 ## Release artifacts and updates
 
-When using release archives, each archive contains both `cass` and `cassady`. macOS and Linux archives also contain `cassady-desktop`; put all extracted binaries somewhere on your `PATH` or keep them in the same directory so `cass desktop` can launch the desktop app.
+When using release archives, each archive contains both `cass` and `cassady`. macOS and Linux archives also contain a release-built `cassady-desktop` with bundled frontend assets; put all extracted binaries somewhere on your `PATH` or keep them in the same directory so `cass desktop` can launch the desktop app.
 
 `cass update` can update release-archive installs from official GitHub releases. It supports the same prebuilt targets as the release process:
 

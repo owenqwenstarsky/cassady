@@ -86,7 +86,7 @@ cass setup
 cass update
 ```
 
-`cass --resume` without an id lists saved chats for the current directory. `cass desktop` launches the desktop app in the background when the `cassady-desktop` binary is installed next to `cass` or on `PATH`; after it starts, you can close the terminal. `cass update` checks official GitHub releases and can update `cass`, `cassady`, and the companion desktop binary when present in the selected prebuilt archive. When Cassady exits a chat, it prints a resume command for that session.
+`cass --resume` without an id lists saved chats for the current directory. `cass desktop` launches the desktop app in the background when a release-built `cassady-desktop` binary is installed next to `cass` or on `PATH`; after it starts, you can close the terminal. Cassady refuses desktop binaries that do not contain the bundled frontend assets because they open as a blank window. `cass update` checks official GitHub releases and can update `cass`, `cassady`, and the companion desktop binary when present in the selected prebuilt archive. When Cassady exits a chat, it prints a resume command for that session.
 
 Common in-chat commands:
 

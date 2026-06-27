@@ -1,10 +1,12 @@
 use crate::cli::{Cli, DesktopArgs};
 use anyhow::{anyhow, bail, Context, Result};
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const DESKTOP_BIN_ENV: &str = "CASSADY_DESKTOP_BIN";
+const DESKTOP_FRONTEND_ASSET_MARKER: &[u8] = b"assets/index-";
 
 pub fn launch(cli: &Cli, args: &DesktopArgs) -> Result<()> {
     let cwd = resolve_launch_cwd(cli.cwd.as_deref())?;
@@ -40,6 +42,7 @@ fn locate_desktop_binary() -> Result<PathBuf> {
     if let Some(path) = env::var_os(DESKTOP_BIN_ENV).filter(|value| !value.is_empty()) {
         let path = PathBuf::from(path);
         if is_runnable_file(&path) {
+            validate_desktop_binary(&path)?;
             return Ok(path);
         }
         bail!(
@@ -53,12 +56,14 @@ fn locate_desktop_binary() -> Result<PathBuf> {
         if let Some(dir) = current_exe.parent() {
             let candidate = dir.join(binary_name);
             if is_runnable_file(&candidate) {
+                validate_desktop_binary(&candidate)?;
                 return Ok(candidate);
             }
         }
     }
 
     if let Some(path) = find_on_path(binary_name) {
+        validate_desktop_binary(&path)?;
         return Ok(path);
     }
 
@@ -80,6 +85,25 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     env::split_paths(&paths)
         .map(|dir| dir.join(name))
         .find(|candidate| is_runnable_file(candidate))
+}
+
+fn validate_desktop_binary(path: &Path) -> Result<()> {
+    if has_embedded_frontend_assets(path)? {
+        return Ok(());
+    }
+
+    bail!(
+        "found Cassady desktop binary at {}, but it does not include the built frontend assets and would open a blank window. Rebuild it with `(cd cassady-desktop && cargo tauri build --no-bundle)` or install a macOS/Linux release/npm package that includes `cassady-desktop`.",
+        path.display()
+    );
+}
+
+fn has_embedded_frontend_assets(path: &Path) -> Result<bool> {
+    let bytes = fs::read(path)
+        .with_context(|| format!("checking embedded desktop assets in {}", path.display()))?;
+    Ok(bytes
+        .windows(DESKTOP_FRONTEND_ASSET_MARKER.len())
+        .any(|window| window == DESKTOP_FRONTEND_ASSET_MARKER))
 }
 
 fn is_runnable_file(path: &Path) -> bool {
@@ -156,5 +180,19 @@ mod tests {
     fn find_on_path_returns_none_for_missing_binary() {
         let name = format!("definitely-not-cassady-desktop-{}", std::process::id());
         assert!(find_on_path(&name).is_none());
+    }
+
+    #[test]
+    fn embedded_frontend_asset_marker_is_detected() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"prefix /assets/index-AbCdEf.js suffix").unwrap();
+        assert!(has_embedded_frontend_assets(file.path()).unwrap());
+    }
+
+    #[test]
+    fn missing_embedded_frontend_asset_marker_is_rejected() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), b"plain cargo-built desktop binary").unwrap();
+        assert!(!has_embedded_frontend_assets(file.path()).unwrap());
     }
 }

@@ -79,7 +79,7 @@ Runs the interactive setup wizard in a terminal. It configures providers, authen
 
 ### `cass desktop`
 
-Launches the Cassady desktop app and immediately detaches it from the terminal, so the app window can keep running after you close the terminal. The desktop binary must be installed as `cassady-desktop` next to `cass` or somewhere on `PATH`. You can also set `CASSADY_DESKTOP_BIN=/path/to/cassady-desktop`.
+Launches the Cassady desktop app and immediately detaches it from the terminal, so the app window can keep running after you close the terminal. The desktop binary must be installed as `cassady-desktop` next to `cass` or somewhere on `PATH`, and it must be a release-built binary with the bundled frontend assets. Cassady rejects assetless desktop binaries because they open as a blank window. You can also set `CASSADY_DESKTOP_BIN=/path/to/cassady-desktop`.
 
 Useful option:
 
