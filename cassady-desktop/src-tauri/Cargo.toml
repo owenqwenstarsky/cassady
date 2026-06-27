@@ -1,0 +1,20 @@
+[package]
+name = "cassady-desktop"
+version = "0.4.0"
+edition = "2021"
+description = "Cassady desktop app"
+license = "MIT"
+
+[lib]
+name = "cassady_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cassady = { path = "../.." }
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }

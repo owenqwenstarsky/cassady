@@ -14,6 +14,9 @@ pub const CHATGPT_CODEX_PROVIDER_NAME: &str = "ChatGPT Codex";
 pub const CHATGPT_CODEX_PROVIDER_KIND: &str = "chatgpt-codex";
 pub const CHATGPT_CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 pub const CHATGPT_CODEX_DEFAULT_MODEL: &str = "gpt-5.5";
+pub const CASSADY_API_PROVIDER_ID: &str = "cassady-api";
+pub const CASSADY_API_PROVIDER_NAME: &str = "Cassady API";
+pub const CASSADY_API_PROVIDER_KIND: &str = "cassady-api";
 pub const DEFAULT_MODEL: &str = "accounts/fireworks/models/qwen3p7-plus";
 pub const DEFAULT_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
 pub const DEFAULT_API_KEY_ENV: &str = "FIREWORKS_API_KEY";
@@ -470,6 +473,7 @@ impl Config {
         match self.active_provider.kind.as_str() {
             DEFAULT_PROVIDER_KIND => self.resolved_api_key().map(|_| ()),
             CHATGPT_CODEX_PROVIDER_KIND => crate::codex_auth::load_codex_access_token().map(|_| ()),
+            CASSADY_API_PROVIDER_KIND => Ok(()),
             kind => bail!("unsupported provider kind `{kind}`"),
         }
     }
@@ -638,7 +642,10 @@ pub fn api_key_reference(spec: &str) -> Result<ApiKeyReference> {
 }
 
 pub fn is_supported_provider_kind(kind: &str) -> bool {
-    matches!(kind, DEFAULT_PROVIDER_KIND | CHATGPT_CODEX_PROVIDER_KIND)
+    matches!(
+        kind,
+        DEFAULT_PROVIDER_KIND | CHATGPT_CODEX_PROVIDER_KIND | CASSADY_API_PROVIDER_KIND
+    )
 }
 
 pub fn resolve_api_key(spec: &str) -> Result<String> {

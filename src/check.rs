@@ -1,8 +1,8 @@
 use crate::cli::Cli;
 use crate::codex_auth;
 use crate::config::{
-    self, ApiKeyReference, Config, ModelsFile, ProvidersFile, CHATGPT_CODEX_PROVIDER_KIND,
-    DEFAULT_PROVIDER_KIND,
+    self, ApiKeyReference, Config, ModelsFile, ProvidersFile, CASSADY_API_PROVIDER_KIND,
+    CHATGPT_CODEX_PROVIDER_KIND, DEFAULT_PROVIDER_KIND,
 };
 use anyhow::{Context, Result};
 use std::fs;
@@ -243,6 +243,11 @@ fn check_provider_auth(
     match kind {
         DEFAULT_PROVIDER_KIND => check_api_key(report, label, api_key, active),
         CHATGPT_CODEX_PROVIDER_KIND => check_codex_auth(report, active),
+        CASSADY_API_PROVIDER_KIND => {
+            report
+                .successes
+                .push(format!("{label}: not required (local API)"));
+        }
         _ if active => report
             .errors
             .push(format!("provider kind `{kind}` is unsupported")),

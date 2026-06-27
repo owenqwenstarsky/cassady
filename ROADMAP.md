@@ -1,6 +1,40 @@
 # Cassady (Cass) Roadmap
 
-## v0.3.5 — Tool Output Context Reliability
+## v0.4.0 — Desktop App
+
+This release focuses on adding a native desktop app for Cassady that runs the real coding agent via the experimental Rust embedding API, themed to match the `cassady-web/` landing page. The desktop app is a peer of the TUI: same config, providers, tools, safety policy, and JSONL storage, with a windowed chat surface for streaming transcripts, tool calls, approvals, and cancellation. See `plans/V0_4_0_DESKTOP_APP_PLAN.md`.
+
+### Workspace Setup
+
+- [ ] **Add the `cassady-desktop` workspace member.** Convert the root `Cargo.toml` to a Cargo workspace with `members = ["cassady-desktop"]` while keeping the existing `cassady` package at the repo root.
+  - Depend on `cassady` via a path dependency; embed through the public `cassady::prelude` API only.
+  - Do not modify `src/` (the existing lib, bins, or TUI).
+
+### Design System Port
+
+- [ ] **Port the landing-page design system into the desktop frontend.** Copy `cassady-web/src/index.css` (tokens, scanlines, grain, vignette, glow utilities) and IBM Plex `@fontsource` setup into the Tauri frontend.
+  - Reuse `cass-logo-transparent.png` for the app icon and in-app branding.
+  - Copy the shadcn `ui/` primitives (button, card, separator, tooltip, accordion) so chrome matches the landing page.
+
+### Chat Surface
+
+- [ ] **Build the streaming chat UI.** Composer, transcript with full markdown rendering for assistant text, tool-call blocks for `read`/`write`/`edit`/`shell`/`grep`/`ls`, reasoning toggle, and a terminal-style status footer.
+  - Stream events over `tauri::ipc::Channel<StreamEvent>` from a per-turn Rust worker that drives `Session`/`Turn`/`Event`.
+  - Approve or deny `ApprovalRequested` events through a native dialog; cancel running turns with `Turn::cancel`.
+
+### Session Lifecycle
+
+- [ ] **Make desktop and CLI sessions interoperable.** New chat, resume by id, and list chats for the current cwd all use the same `~/.cass/conversations/*.jsonl` storage.
+  - A chat started in the desktop app is resumable from `cass --resume <id>`, and a CLI-started chat is openable in the desktop app.
+  - Show a "run `cass setup` first" card when `~/.cass` has no valid provider config; a setup-wizard GUI is deferred.
+
+### Verification
+
+- [ ] **Build, test, and document the desktop app.** `cargo build -p cassady-desktop`, `npm run tauri build`, and a manual smoke test across new chat, streaming, approval, cancel, and resume interop.
+  - Add Rust tests for `StreamEvent` mapping and `SessionBuilder` round-trip against a temp `config_root`.
+  - Verify `cargo fmt` and `cargo test --locked --all-targets` pass across the workspace.
+
+## v0.3.5 — Tool Output Context Reliability ✅ Completed
 
 This release focuses on making large tool outputs easier for the assistant to recover from when model-context compaction or truncation hides important details. Cassady should guide the assistant toward smaller, targeted reads and searches, preserve enough provenance for follow-up inspection, and add regression coverage for broad-output workflows that previously stalled safe edits. See `plans/V0_3_5_TOOL_OUTPUT_CONTEXT_RELIABILITY_PLAN.md`.
 

@@ -3,7 +3,10 @@ pub mod openai_compatible;
 pub mod types;
 
 use crate::agent::AgentEvent;
-use crate::config::{Config, ReasoningEffort, CHATGPT_CODEX_PROVIDER_KIND, DEFAULT_PROVIDER_KIND};
+use crate::config::{
+    Config, ReasoningEffort, CASSADY_API_PROVIDER_KIND, CHATGPT_CODEX_PROVIDER_KIND,
+    DEFAULT_PROVIDER_KIND,
+};
 use crate::providers::chatgpt_codex::{ChatGptCodexProvider, ChatGptCodexSettings};
 use crate::providers::openai_compatible::{OpenAiCompatibleProvider, OpenAiCompatibleSettings};
 use crate::providers::types::{CompletionResult, ModelMessage};
@@ -54,6 +57,25 @@ impl ProviderClient {
                     fast_mode: options.fast_mode,
                 },
             ))),
+            CASSADY_API_PROVIDER_KIND => {
+                let model_metadata = config.model_metadata.as_ref();
+                let reasoning_request_format = model_metadata
+                    .map(|model| model.reasoning.request_format)
+                    .unwrap_or_default();
+                let reasoning_supported = model_metadata
+                    .map(|model| model.reasoning.supported)
+                    .unwrap_or(false);
+                Ok(Self::OpenAiCompatible(OpenAiCompatibleProvider::new(
+                    OpenAiCompatibleSettings {
+                        model: config.model.clone(),
+                        base_url: config.active_provider.base_url.clone(),
+                        api_key: String::new(),
+                        reasoning_effort: options.reasoning_effort,
+                        reasoning_request_format,
+                        reasoning_supported,
+                    },
+                )))
+            }
             kind => bail!("unsupported provider kind `{kind}`"),
         }
     }
