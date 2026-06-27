@@ -18,7 +18,7 @@ export default function App() {
 
   if (!cwd) {
     return (
-      <div className="vignette scanlines grain flex h-screen items-center justify-center bg-[var(--color-bg)] font-mono text-xs text-[var(--color-fg-dim)]">
+      <div className="vignette scanlines grain flex h-screen w-screen items-center justify-center bg-[var(--color-bg)] font-mono text-xs text-[var(--color-fg-dim)]">
         loading…
       </div>
     );

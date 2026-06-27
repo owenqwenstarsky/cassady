@@ -2,7 +2,26 @@
 
 ## Release process: build artifacts and create a draft GitHub release
 
-Use this process when preparing a Cassady (`cass`) release. Always create the GitHub release as a **draft** first; do not publish the final release unless the user explicitly asks.
+Use this process when preparing a Cassady (`cass`) release. Prefer the GitHub Actions release workflow over local cross-builds so macOS/Linux/Windows assets are built on runners instead of by hand. Always create the GitHub release as a **draft** first; do not publish the final release unless the user explicitly asks.
+
+### 0. Preferred automated release workflow
+
+The release workflow is `.github/workflows/release.yml`. On a pushed `v*` tag it builds and uploads draft GitHub release assets automatically. For an existing tag or to publish the release/npm packages, run it manually:
+
+```sh
+gh workflow run release.yml \
+  --repo owenqwenstarsky/cassady \
+  -f tag="$TAG" \
+  -f replace_assets=true \
+  -f publish_github_release=false \
+  -f publish_npm=false
+```
+
+Set `publish_github_release=true` only when the user explicitly asks to publish the GitHub release. Set `publish_npm=true` only when the user explicitly asks to publish npm packages, and make sure the `NPM_TOKEN` repository secret exists first. The workflow deletes/replaces old release assets, uploads the four current archives/checksums, and publishes npm packages from those runner-built archives.
+
+Keep release notes in `docs/releases/${TAG}.md` when the workflow should apply curated notes. If that file is missing, the workflow falls back to generated placeholder notes.
+
+Use the manual steps below only for local debugging or when the workflow cannot be used.
 
 ### 1. Review prior releases for consistency
 
@@ -17,7 +36,7 @@ Keep release notes consistent with the existing format:
 - Title: `## Cassady vX.Y.Z`
 - One short summary paragraph.
 - `### Downloads` with four bullets in this order: macOS Apple Silicon, Linux x86_64, Linux ARM64, Windows x86_64.
-- Note that each archive contains both `cass` and `cassady`; mention SHA-256 files.
+- Note that macOS/Linux archives contain `cass`, `cassady`, and `cassady-desktop`; the Windows archive contains `cass` and `cassady`; mention SHA-256 files.
 - `### Highlights` with concise user-facing bullets.
 - Optional `### Upgrade notes` only when compatibility, config, or migration details matter.
 - `### Install from source` with a `cargo install --git ... --tag vX.Y.Z` command.
@@ -41,22 +60,30 @@ If the version is wrong, update `Cargo.toml` and `Cargo.lock` first, then commit
 cargo +stable test --locked --all-targets
 ```
 
-### 4. Build all release binaries
+### 4. Build all release binaries manually only when needed
 
-Prerequisites for cross-builds: stable Rust, `cargo-zigbuild`, Zig, and the needed Rust targets.
+The runner workflow should normally do this. Manual prerequisites for cross-builds are stable Rust, `cargo-zigbuild`, Tauri CLI, Zig, Node/npm, and the needed Rust targets.
 
 ```sh
 rustup target add aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-pc-windows-gnu
-cargo install cargo-zigbuild --locked
+cargo install cargo-zigbuild tauri-cli --locked
 ```
 
-Build the same four targets used by previous releases:
+Build the same four CLI targets used by previous releases, then build desktop binaries for macOS/Linux. Do not build or upload DMG/installer artifacts unless the user explicitly asks.
 
 ```sh
 cargo +stable build --release --locked --target aarch64-apple-darwin
 cargo +stable zigbuild --release --locked --target x86_64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target aarch64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target x86_64-pc-windows-gnu
+
+(cd cassady-desktop && cargo tauri build --target aarch64-apple-darwin)
+# Build Linux desktop binaries with `cargo tauri build` on Linux/Tauri builders. The packaging step accepts either:
+#   target/x86_64-unknown-linux-gnu/release/cassady-desktop
+#   target/aarch64-unknown-linux-gnu/release/cassady-desktop
+# or the Tauri builder output paths:
+#   target/tauri-linux-x86_64/release/cassady-desktop
+#   target/tauri-linux-aarch64/release/cassady-desktop
 ```
 
 ### 5. Rebuild the `dist/` artifacts
@@ -75,11 +102,40 @@ rm -rf \
 
 mkdir -p dist
 
+desktop_binary_for() {
+  case "$1" in
+    aarch64-apple-darwin)
+      if [ -f "target/aarch64-apple-darwin/release/cassady-desktop" ]; then
+        printf '%s\n' "target/aarch64-apple-darwin/release/cassady-desktop"
+      else
+        printf '%s\n' "target/release/cassady-desktop"
+      fi
+      ;;
+    x86_64-unknown-linux-gnu)
+      if [ -f "target/x86_64-unknown-linux-gnu/release/cassady-desktop" ]; then
+        printf '%s\n' "target/x86_64-unknown-linux-gnu/release/cassady-desktop"
+      else
+        printf '%s\n' "target/tauri-linux-x86_64/release/cassady-desktop"
+      fi
+      ;;
+    aarch64-unknown-linux-gnu)
+      if [ -f "target/aarch64-unknown-linux-gnu/release/cassady-desktop" ]; then
+        printf '%s\n' "target/aarch64-unknown-linux-gnu/release/cassady-desktop"
+      else
+        printf '%s\n' "target/tauri-linux-aarch64/release/cassady-desktop"
+      fi
+      ;;
+  esac
+}
+
 for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
   name="cassady-${TAG}-${target}"
+  desktop_bin=$(desktop_binary_for "$target")
+  test -f "$desktop_bin"
   mkdir -p "dist/${name}"
   cp "target/${target}/release/cass" "dist/${name}/cass"
   cp "target/${target}/release/cassady" "dist/${name}/cassady"
+  cp "$desktop_bin" "dist/${name}/cassady-desktop"
   cp README.md "dist/${name}/README.md"
   tar -C dist -czf "dist/${name}.tar.gz" "${name}"
 done
@@ -103,6 +159,7 @@ Sanity-check the generated artifacts:
 ls -lh dist/cassady-${TAG}-*.tar.gz dist/cassady-${TAG}-*.zip dist/cassady-${TAG}-*.sha256
 for sum in dist/cassady-${TAG}-*.sha256; do (cd dist && shasum -a 256 -c "$(basename "$sum")"); done
 tar -tzf "dist/cassady-${TAG}-aarch64-apple-darwin.tar.gz" | head
+tar -tzf "dist/cassady-${TAG}-x86_64-unknown-linux-gnu.tar.gz" | grep cassady-desktop
 unzip -l "dist/cassady-${TAG}-x86_64-pc-windows-gnu.zip" | head
 ```
 
@@ -122,7 +179,7 @@ Cassady vX.Y.Z ...
 - Linux ARM64: `cassady-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz`
 - Windows x86_64: `cassady-vX.Y.Z-x86_64-pc-windows-gnu.zip`
 
-Each archive contains both `cass` and `cassady`. SHA-256 checksum files are included for every archive.
+The macOS and Linux archives contain `cass`, `cassady`, and `cassady-desktop`; launch the desktop app with `cass desktop`. The Windows archive contains `cass` and `cassady`. SHA-256 checksum files are included for every archive.
 
 ### Highlights
 
@@ -148,6 +205,8 @@ cargo +stable build --release --locked --target aarch64-apple-darwin
 cargo +stable zigbuild --release --locked --target x86_64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target aarch64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target x86_64-pc-windows-gnu
+(cd cassady-desktop && cargo tauri build --target aarch64-apple-darwin)
+# Linux desktop binaries built with `cargo tauri build` on Linux/Tauri builders and copied into the Linux archives.
 ```
 ````
 
@@ -199,7 +258,7 @@ gh release view "$TAG" --repo owenqwenstarsky/cassady --json tagName,name,isDraf
 
 Do **not** publish the draft or mark it as the final/latest release unless the user explicitly asks.
 
-## NPM package process: prepare and publish the CLI packages
+## NPM package process: prepare and publish the binary packages
 
 Use this process when preparing Cassady for npm. The npm distribution is a tiny wrapper package plus platform-specific binary packages. Do not publish to npm unless the user explicitly asks; when they ask for a publish-ready setup, make sure the packages can be published with one command.
 
@@ -209,6 +268,7 @@ The committed npm tooling generates packages under `dist/npm/` from the current 
 
 - Wrapper package: `cassady`
   - Exposes both npm binaries: `cass` and `cassady`.
+  - `cass desktop` launches the bundled desktop binary when the installed platform package includes one.
   - Depends on the platform packages through `optionalDependencies` at the exact same version.
 - Platform packages:
   - `@cassady/cli-darwin-arm64` for `aarch64-apple-darwin`
@@ -220,7 +280,7 @@ Before the first publish, make sure the npm account owns or has publish access t
 
 ### 1. Build the release binaries first
 
-The npm packages copy binaries from `target/<target>/release/`, so run the same verification and target builds used for the GitHub release first:
+Prefer the `.github/workflows/release.yml` workflow with `publish_npm=true`; it rebuilds release assets on runners, rehydrates the npm package inputs from those archives, and publishes with `NPM_TOKEN`. For manual publishing, the npm packages copy binaries from the release build outputs, so run the same verification and target builds used for the GitHub release first. macOS/Linux packages include `cassady-desktop` so `cass desktop` works from npm installs; Windows remains CLI-only for now.
 
 ```sh
 cargo +stable test --locked --all-targets
@@ -228,6 +288,8 @@ cargo +stable build --release --locked --target aarch64-apple-darwin
 cargo +stable zigbuild --release --locked --target x86_64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target aarch64-unknown-linux-gnu
 cargo +stable zigbuild --release --locked --target x86_64-pc-windows-gnu
+(cd cassady-desktop && cargo tauri build --target aarch64-apple-darwin)
+# Linux desktop binaries built with `cargo tauri build` on Linux/Tauri builders, as in the GitHub release process.
 ```
 
 ### 2. Generate and verify the npm package directories

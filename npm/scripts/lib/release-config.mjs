@@ -17,7 +17,7 @@ export const platforms = [
   {
     name: '@cassady/cli-darwin-arm64',
     dirName: 'cassady-cli-darwin-arm64',
-    description: 'Cassady CLI binaries for macOS Apple Silicon.',
+    description: 'Cassady CLI and desktop binaries for macOS Apple Silicon.',
     triple: 'aarch64-apple-darwin',
     os: 'darwin',
     cpu: 'arm64',
@@ -26,7 +26,7 @@ export const platforms = [
   {
     name: '@cassady/cli-linux-x64',
     dirName: 'cassady-cli-linux-x64',
-    description: 'Cassady CLI binaries for Linux x86_64.',
+    description: 'Cassady CLI and desktop binaries for Linux x86_64.',
     triple: 'x86_64-unknown-linux-gnu',
     os: 'linux',
     cpu: 'x64',
@@ -35,7 +35,7 @@ export const platforms = [
   {
     name: '@cassady/cli-linux-arm64',
     dirName: 'cassady-cli-linux-arm64',
-    description: 'Cassady CLI binaries for Linux ARM64.',
+    description: 'Cassady CLI and desktop binaries for Linux ARM64.',
     triple: 'aarch64-unknown-linux-gnu',
     os: 'linux',
     cpu: 'arm64',

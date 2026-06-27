@@ -92,6 +92,7 @@ struct InstallPlan {
 struct StagedBinaries {
     cass: PathBuf,
     cassady: PathBuf,
+    desktop: Option<PathBuf>,
 }
 
 pub async fn run(args: UpdateArgs) -> Result<()> {
@@ -538,6 +539,7 @@ async fn run_source_update(
             .join("target")
             .join("release")
             .join(format!("cassady{suffix}")),
+        desktop: None,
     };
     if !built.cass.is_file() || !built.cassady.is_file() {
         bail!("source build did not produce both cass and cassady binaries");
@@ -717,7 +719,12 @@ fn find_staged_binaries(root: &Path, suffix: &str) -> Result<StagedBinaries> {
         .ok_or_else(|| anyhow!("archive does not contain {cass_name}"))?;
     let cassady = find_file_named(root, &cassady_name)?
         .ok_or_else(|| anyhow!("archive does not contain {cassady_name}"))?;
-    Ok(StagedBinaries { cass, cassady })
+    let desktop = find_file_named(root, &format!("cassady-desktop{suffix}"))?;
+    Ok(StagedBinaries {
+        cass,
+        cassady,
+        desktop,
+    })
 }
 
 fn find_file_named(root: &Path, name: &str) -> Result<Option<PathBuf>> {
@@ -835,16 +842,26 @@ fn build_install_plan(
     let suffix = if cfg!(windows) { ".exe" } else { "" };
     let cass_target = install_dir.join(format!("cass{suffix}"));
     let cassady_target = install_dir.join(format!("cassady{suffix}"));
+    let desktop_target = install_dir.join(format!("cassady-desktop{suffix}"));
     let current_name = current_exe
         .file_name()
         .and_then(OsStr::to_str)
         .ok_or_else(|| anyhow!("current executable path has no filename"))?;
 
-    let mut actions = Vec::new();
-    for (name, target, staged_path) in [
+    let mut action_inputs = vec![
         ("cass", cass_target, staged.map(|s| s.cass.clone())),
         ("cassady", cassady_target, staged.map(|s| s.cassady.clone())),
-    ] {
+    ];
+    if staged.and_then(|s| s.desktop.as_ref()).is_some() {
+        action_inputs.push((
+            "cassady-desktop",
+            desktop_target,
+            staged.and_then(|s| s.desktop.clone()),
+        ));
+    }
+
+    let mut actions = Vec::new();
+    for (name, target, staged_path) in action_inputs {
         let is_current = current_name
             == target
                 .file_name()
@@ -1221,6 +1238,7 @@ mod tests {
             } else {
                 "cassady"
             }),
+            desktop: None,
         };
         fs::write(&staged.cass, b"new").unwrap();
         fs::write(&staged.cassady, b"new").unwrap();
@@ -1228,6 +1246,40 @@ mod tests {
         assert_eq!(plan.actions.len(), 2);
         assert_eq!(plan.actions[0].kind, InstallActionKind::Replace);
         assert_eq!(plan.actions[1].kind, InstallActionKind::AddCompanion);
+    }
+
+    #[test]
+    fn plans_install_for_staged_desktop_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let cass = dir
+            .path()
+            .join(if cfg!(windows) { "cass.exe" } else { "cass" });
+        fs::write(&cass, b"old").unwrap();
+        let staged_dir = tempfile::tempdir().unwrap();
+        let desktop_name = if cfg!(windows) {
+            "cassady-desktop.exe"
+        } else {
+            "cassady-desktop"
+        };
+        let staged = StagedBinaries {
+            cass: staged_dir
+                .path()
+                .join(if cfg!(windows) { "cass.exe" } else { "cass" }),
+            cassady: staged_dir.path().join(if cfg!(windows) {
+                "cassady.exe"
+            } else {
+                "cassady"
+            }),
+            desktop: Some(staged_dir.path().join(desktop_name)),
+        };
+        fs::write(&staged.cass, b"new").unwrap();
+        fs::write(&staged.cassady, b"new").unwrap();
+        fs::write(staged.desktop.as_ref().unwrap(), b"desktop").unwrap();
+
+        let plan = build_install_plan(dir.path(), &cass, Some(&staged)).unwrap();
+        assert_eq!(plan.actions.len(), 3);
+        assert_eq!(plan.actions[2].name, "cassady-desktop");
+        assert_eq!(plan.actions[2].kind, InstallActionKind::AddCompanion);
     }
 
     #[test]
@@ -1243,6 +1295,7 @@ mod tests {
         let staged = StagedBinaries {
             cass: staged_dir.path().join("cass"),
             cassady: staged_dir.path().join("cassady"),
+            desktop: None,
         };
         fs::write(&staged.cass, b"new cass").unwrap();
         fs::write(&staged.cassady, b"new cassady").unwrap();

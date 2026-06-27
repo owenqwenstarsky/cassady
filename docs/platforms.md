@@ -37,7 +37,7 @@ Example path usage:
 cass --cwd C:\Users\alex\project
 ```
 
-Current docs and examples are primarily terminal-CLI oriented. Deeper Windows polish for terminal behavior, path handling, shell behavior, filesystem edge cases, and release usability is planned for a later release. Avoid assuming every Windows path or shell edge case is polished in the current version.
+Current docs and examples are primarily terminal-CLI oriented. The desktop preview is not packaged as a native Windows desktop executable; use the Linux binary under WSL/WSLg if you want to try it on Windows for now. Deeper Windows polish for terminal behavior, path handling, shell behavior, filesystem edge cases, and release usability is planned for a later release. Avoid assuming every Windows path or shell edge case is polished in the current version.
 
 ## Config location
 
@@ -59,7 +59,7 @@ That directory contains `config.json`, `providers.json`, `models.json`, `global.
 
 ## Release artifacts and updates
 
-When using release archives, each archive contains both `cass` and `cassady`. Put the extracted binaries somewhere on your `PATH` or run them by explicit path.
+When using release archives, each archive contains both `cass` and `cassady`. macOS and Linux archives also contain `cassady-desktop`; put all extracted binaries somewhere on your `PATH` or keep them in the same directory so `cass desktop` can launch the desktop app.
 
 `cass update` can update release-archive installs from official GitHub releases. It supports the same prebuilt targets as the release process:
 
@@ -68,6 +68,6 @@ When using release archives, each archive contains both `cass` and `cassady`. Pu
 - Linux ARM64: `aarch64-unknown-linux-gnu`
 - Windows x86_64: `x86_64-pc-windows-gnu`
 
-On macOS and Linux, the updater replaces same-directory `cass` and `cassady` binaries with backups and rollback on failure. On Windows, replacing a running `.exe` is more constrained; if automatic replacement is unavailable, Cassady leaves staged files in place and reports manual copy guidance instead of partially modifying the install.
+On macOS and Linux, the updater replaces same-directory `cass` and `cassady` binaries with backups and rollback on failure. For prebuilt archives that include `cassady-desktop`, it installs that companion binary too. On Windows, replacing a running `.exe` is more constrained; if automatic replacement is unavailable, Cassady leaves staged files in place and reports manual copy guidance instead of partially modifying the install.
 
 If Cassady is installed through a package manager in the future, prefer that package manager's update command instead of `cass update`.

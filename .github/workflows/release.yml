@@ -1,0 +1,426 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build, for example v0.4.0'
+        required: true
+        type: string
+      replace_assets:
+        description: 'Delete existing release assets before uploading rebuilt assets'
+        required: true
+        default: true
+        type: boolean
+      publish_github_release:
+        description: 'Publish the GitHub release after uploading assets'
+        required: true
+        default: false
+        type: boolean
+      publish_npm:
+        description: 'Publish npm packages after release assets are built. Requires the NPM_TOKEN repository secret.'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+jobs:
+  test:
+    name: Test release commit
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Confirm version matches tag
+        run: |
+          version=$(awk -F\" '/^version = / { print $2; exit }' Cargo.toml)
+          test "${RELEASE_TAG}" = "v${version}"
+
+      - name: Run tests
+        run: cargo test --locked --all-targets
+
+  build-macos:
+    name: Build macOS Apple Silicon
+    needs: test
+    runs-on: macos-14
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cassady-desktop/package-lock.json
+
+      - name: Install desktop frontend dependencies
+        working-directory: cassady-desktop
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.11.3 --locked
+
+      - name: Build CLI binaries
+        run: cargo build -p cassady --release --locked --target aarch64-apple-darwin --bin cass --bin cassady
+
+      - name: Build desktop binary
+        working-directory: cassady-desktop
+        run: cargo tauri build --target aarch64-apple-darwin --no-bundle -- --locked
+
+      - name: Package archive
+        env:
+          TRIPLE: aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          name="cassady-${RELEASE_TAG}-${TRIPLE}"
+          mkdir -p "dist/${name}"
+          cp "target/${TRIPLE}/release/cass" "dist/${name}/cass"
+          cp "target/${TRIPLE}/release/cassady" "dist/${name}/cassady"
+          cp "target/${TRIPLE}/release/cassady-desktop" "dist/${name}/cassady-desktop"
+          cp README.md "dist/${name}/README.md"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-aarch64-apple-darwin
+          path: |
+            dist/cassady-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz
+            dist/cassady-${{ env.RELEASE_TAG }}-aarch64-apple-darwin.tar.gz.sha256
+          if-no-files-found: error
+
+  build-linux:
+    name: Build Linux ${{ matrix.label }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: x86_64
+            runner: ubuntu-24.04
+            triple: x86_64-unknown-linux-gnu
+          - label: ARM64
+            runner: ubuntu-24.04-arm
+            triple: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cassady-desktop/package-lock.json
+
+      - name: Install desktop frontend dependencies
+        working-directory: cassady-desktop
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.11.3 --locked
+
+      - name: Build CLI binaries
+        run: cargo build -p cassady --release --locked --target "${{ matrix.triple }}" --bin cass --bin cassady
+
+      - name: Build desktop binary
+        working-directory: cassady-desktop
+        run: cargo tauri build --target "${{ matrix.triple }}" --no-bundle -- --locked
+
+      - name: Package archive
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          set -euo pipefail
+          name="cassady-${RELEASE_TAG}-${TRIPLE}"
+          mkdir -p "dist/${name}"
+          cp "target/${TRIPLE}/release/cass" "dist/${name}/cass"
+          cp "target/${TRIPLE}/release/cassady" "dist/${name}/cassady"
+          cp "target/${TRIPLE}/release/cassady-desktop" "dist/${name}/cassady-desktop"
+          cp README.md "dist/${name}/README.md"
+          tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+          (cd dist && shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256")
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.triple }}
+          path: |
+            dist/cassady-${{ env.RELEASE_TAG }}-${{ matrix.triple }}.tar.gz
+            dist/cassady-${{ env.RELEASE_TAG }}-${{ matrix.triple }}.tar.gz.sha256
+          if-no-files-found: error
+
+  build-windows-cli:
+    name: Build Windows x86_64 CLI
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.14.1
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Build Windows CLI binaries
+        run: cargo zigbuild -p cassady --release --locked --target x86_64-pc-windows-gnu --bin cass --bin cassady
+
+      - name: Package archive
+        env:
+          TRIPLE: x86_64-pc-windows-gnu
+        run: |
+          set -euo pipefail
+          name="cassady-${RELEASE_TAG}-${TRIPLE}"
+          mkdir -p "dist/${name}"
+          cp "target/${TRIPLE}/release/cass.exe" "dist/${name}/cass.exe"
+          cp "target/${TRIPLE}/release/cassady.exe" "dist/${name}/cassady.exe"
+          cp README.md "dist/${name}/README.md"
+          (cd dist && zip -qr "${name}.zip" "${name}")
+          (cd dist && shasum -a 256 "${name}.zip" > "${name}.zip.sha256")
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-x86_64-pc-windows-gnu
+          path: |
+            dist/cassady-${{ env.RELEASE_TAG }}-x86_64-pc-windows-gnu.zip
+            dist/cassady-${{ env.RELEASE_TAG }}-x86_64-pc-windows-gnu.zip.sha256
+          if-no-files-found: error
+
+  github-release:
+    name: Upload GitHub release assets
+    needs:
+      - build-macos
+      - build-linux
+      - build-windows-cli
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPLACE_ASSETS: ${{ github.event_name != 'workflow_dispatch' || inputs.replace_assets }}
+      PUBLISH_GITHUB_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_github_release }}
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          ls -lh dist/cassady-${RELEASE_TAG}-*
+          for sum in dist/cassady-${RELEASE_TAG}-*.sha256; do
+            (cd dist && shasum -a 256 -c "$(basename "$sum")")
+          done
+
+      - name: Choose release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          if [ -f "docs/releases/${tag}.md" ]; then
+            echo "file=docs/releases/${tag}.md" >> "$GITHUB_OUTPUT"
+          elif [ -f "dist/RELEASE_NOTES_${tag}.md" ]; then
+            echo "file=dist/RELEASE_NOTES_${tag}.md" >> "$GITHUB_OUTPUT"
+          else
+            printf '## Cassady %s\n\nRelease assets for Cassady %s.\n' "$tag" "$tag" > "dist/RELEASE_NOTES_${tag}.md"
+            echo "file=dist/RELEASE_NOTES_${tag}.md" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update release assets
+        run: |
+          set -euo pipefail
+          tag="${RELEASE_TAG}"
+          notes="${{ steps.notes.outputs.file }}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cassady ${tag}" \
+              --notes-file "$notes" \
+              --draft \
+              --verify-tag
+          else
+            gh release edit "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Cassady ${tag}" \
+              --notes-file "$notes"
+          fi
+
+          if [ "$REPLACE_ASSETS" = "true" ]; then
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              [ -z "$asset" ] && continue
+              gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" -y
+            done
+          fi
+
+          gh release upload "$tag" \
+            dist/cassady-${tag}-aarch64-apple-darwin.tar.gz \
+            dist/cassady-${tag}-aarch64-apple-darwin.tar.gz.sha256 \
+            dist/cassady-${tag}-x86_64-unknown-linux-gnu.tar.gz \
+            dist/cassady-${tag}-x86_64-unknown-linux-gnu.tar.gz.sha256 \
+            dist/cassady-${tag}-aarch64-unknown-linux-gnu.tar.gz \
+            dist/cassady-${tag}-aarch64-unknown-linux-gnu.tar.gz.sha256 \
+            dist/cassady-${tag}-x86_64-pc-windows-gnu.zip \
+            dist/cassady-${tag}-x86_64-pc-windows-gnu.zip.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+
+          if [ "$PUBLISH_GITHUB_RELEASE" = "true" ]; then
+            release_id=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)
+            gh api \
+              --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -F draft=false \
+              -F prerelease=false \
+              -f make_latest=true >/dev/null
+          fi
+
+  npm-publish:
+    name: Publish npm packages
+    needs:
+      - github-release
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_npm }}
+    runs-on: ubuntu-24.04
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Check out release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org/
+
+      - name: Rehydrate target binaries from release archives
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::Set the NPM_TOKEN repository secret before publishing npm packages."
+            exit 1
+          fi
+
+          for archive in dist/cassady-${RELEASE_TAG}-*.tar.gz; do
+            tar -xzf "$archive" -C dist
+          done
+          unzip -q -o "dist/cassady-${RELEASE_TAG}-x86_64-pc-windows-gnu.zip" -d dist
+
+          for triple in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+            src="dist/cassady-${RELEASE_TAG}-${triple}"
+            dst="target/${triple}/release"
+            mkdir -p "$dst"
+            cp "$src/cass" "$dst/cass"
+            cp "$src/cassady" "$dst/cassady"
+            cp "$src/cassady-desktop" "$dst/cassady-desktop"
+            chmod 755 "$dst/cass" "$dst/cassady" "$dst/cassady-desktop"
+          done
+
+          triple=x86_64-pc-windows-gnu
+          src="dist/cassady-${RELEASE_TAG}-${triple}"
+          dst="target/${triple}/release"
+          mkdir -p "$dst"
+          cp "$src/cass.exe" "$dst/cass.exe"
+          cp "$src/cassady.exe" "$dst/cassady.exe"
+
+      - name: Publish to npm
+        run: npm run npm:publish

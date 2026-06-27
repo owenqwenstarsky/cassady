@@ -28,6 +28,7 @@ dirs = "5"
 futures-util = "0.3"
 ignore = "0.4"
 include_dir = "0.7"
+libc = "0.2"
 nanoid = "0.4"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "underline-color"] }
 regex = "1"

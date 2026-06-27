@@ -27,6 +27,31 @@ function copyExecutable(source, destination) {
   fs.chmodSync(destination, 0o755);
 }
 
+function findFirstExisting(candidates) {
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function desktopBinaryCandidates(platform) {
+  if (platform.os === 'win32') {
+    return [];
+  }
+
+  const fileName = `cassady-desktop${platform.exeSuffix}`;
+  const candidates = [path.join(repoRoot, 'target', platform.triple, 'release', fileName)];
+
+  if (platform.triple === 'aarch64-apple-darwin') {
+    candidates.push(path.join(repoRoot, 'target', 'release', fileName));
+  }
+  if (platform.triple === 'x86_64-unknown-linux-gnu') {
+    candidates.push(path.join(repoRoot, 'target', 'tauri-linux-x86_64', 'release', fileName));
+  }
+  if (platform.triple === 'aarch64-unknown-linux-gnu') {
+    candidates.push(path.join(repoRoot, 'target', 'tauri-linux-aarch64', 'release', fileName));
+  }
+
+  return candidates;
+}
+
 function repositoryMetadata() {
   return {
     type: 'git',
@@ -54,6 +79,16 @@ function writePlatformPackage(platform) {
     copyExecutable(source, destination);
   }
 
+  const desktopCandidates = desktopBinaryCandidates(platform);
+  const desktopSource = findFirstExisting(desktopCandidates);
+  if (desktopCandidates.length > 0) {
+    ensureFile(
+      desktopSource ?? desktopCandidates[0],
+      `Build the desktop binary first. Checked:\n${desktopCandidates.join('\n')}`
+    );
+    copyExecutable(desktopSource, path.join(binDir, `cassady-desktop${platform.exeSuffix}`));
+  }
+
   writeJson(path.join(dir, 'package.json'), {
     name: platform.name,
     version,
@@ -66,9 +101,10 @@ function writePlatformPackage(platform) {
     files: ['bin'],
   });
 
+  const binaryList = desktopCandidates.length > 0 ? '`cass`, `cassady`, and `cassady-desktop`' : '`cass` and `cassady`';
   fs.writeFileSync(
     path.join(dir, 'README.md'),
-    `# ${platform.name}\n\n${platform.description}\n\nThis package is installed automatically by the \`cassady\` npm package on supported platforms. It contains the Rust-built \`cass\` and \`cassady\` executables for \`${platform.triple}\`.\n`
+    `# ${platform.name}\n\n${platform.description}\n\nThis package is installed automatically by the \`cassady\` npm package on supported platforms. It contains the Rust-built ${binaryList} executables for \`${platform.triple}\`.\n`
   );
 }
 
@@ -101,7 +137,7 @@ function writeWrapperPackage() {
 
   fs.writeFileSync(
     path.join(dir, 'README.md'),
-    `# Cassady / Cass\n\nCassady (\`cass\`) is a terminal coding agent written in Rust. This npm package is a tiny launcher that installs the matching platform-specific binary package and exposes both commands:\n\n\`\`\`sh\nnpm install -g cassady\ncass --version\ncassady --version\n\`\`\`\n\nThe platform-specific packages contain the Rust-built executables. Supported npm platforms are macOS Apple Silicon, Linux x86_64, Linux ARM64, and Windows x86_64.\n`
+    `# Cassady / Cass\n\nCassady (\`cass\`) is a terminal coding agent written in Rust. This npm package is a tiny launcher that installs the matching platform-specific binary package and exposes both commands:\n\n\`\`\`sh\nnpm install -g cassady\ncass --version\ncassady --version\ncass desktop\n\`\`\`\n\nThe macOS and Linux platform packages also include the \`cassady-desktop\` binary used by \`cass desktop\`. Supported npm platforms are macOS Apple Silicon, Linux x86_64, Linux ARM64, and Windows x86_64.\n`
   );
 
   const launcher = `'use strict';

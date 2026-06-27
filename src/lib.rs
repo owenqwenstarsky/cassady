@@ -7,6 +7,7 @@ pub mod cli;
 pub mod codex_auth;
 pub mod config;
 pub mod conversation;
+pub mod desktop;
 pub mod docs;
 pub mod embedding;
 pub mod error;

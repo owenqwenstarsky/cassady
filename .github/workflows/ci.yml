@@ -5,12 +5,16 @@ on:
     paths:
       - 'src/**'
       - 'tests/**'
+      - 'cassady-desktop/**'
       - 'docs/**'
       - 'plans/**'
       - '*.md'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.rs'
+      - 'package.json'
+      - 'npm/**'
+      - '.github/workflows/**'
 
 permissions:
   contents: read
@@ -25,6 +29,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -41,6 +57,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

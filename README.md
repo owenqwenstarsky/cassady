@@ -9,11 +9,11 @@ The project installs two equivalent commands, `cass` and `cassady`; examples use
 ## Current scope and limitations
 
 - Provider support includes OpenAI-compatible chat/completions APIs plus the `ChatGPT Codex` preset for users already signed in to Codex.
-- The primary interface is an interactive terminal UI.
+- The primary interface is an interactive terminal UI; v0.4.0 also includes a desktop app preview launched with `cass desktop` on macOS/Linux binary installs.
 - An experimental Rust embedding API for headless sessions is available (added in v0.2.6); it is useful for early integrations but not yet a stable long-term library contract.
 - Config and conversation state live under `~/.cass`.
 - Windows binaries are built for releases, but deeper Windows terminal, path, shell, and filesystem polish is planned for a later release.
-- `cass update` can update release-archive installs from official GitHub releases; external package managers should still be updated through their own tools.
+- `cass update` can update release-archive installs from official GitHub releases, including the companion desktop binary when present in a prebuilt archive; external package managers should still be updated through their own tools.
 
 ## Install with npm
 
@@ -30,7 +30,7 @@ cass --version
 cassady --version
 ```
 
-The npm package installs a small launcher plus the matching Rust-built binary package for your platform. Supported npm platforms are macOS Apple Silicon, Linux x86_64, Linux ARM64, and Windows x86_64.
+The npm package installs a small launcher plus the matching Rust-built binary package for your platform. macOS and Linux packages include the `cassady-desktop` companion used by `cass desktop`; Windows remains CLI-only for now. Supported npm platforms are macOS Apple Silicon, Linux x86_64, Linux ARM64, and Windows x86_64.
 
 ## Install from source
 
@@ -78,6 +78,7 @@ Run `cass check` any time to validate JSON config, provider/model references, ac
 cass [--model MODEL] [--cwd PATH]
 cass --resume <chat-id>
 cass --resume
+cass desktop
 cass check
 cass login
 cass logout
@@ -85,7 +86,7 @@ cass setup
 cass update
 ```
 
-`cass --resume` without an id lists saved chats for the current directory. `cass update` checks official GitHub releases and can update both `cass` and `cassady` in the current install directory. When Cassady exits a chat, it prints a resume command for that session.
+`cass --resume` without an id lists saved chats for the current directory. `cass desktop` launches the desktop app in the background when the `cassady-desktop` binary is installed next to `cass` or on `PATH`; after it starts, you can close the terminal. `cass update` checks official GitHub releases and can update `cass`, `cassady`, and the companion desktop binary when present in the selected prebuilt archive. When Cassady exits a chat, it prints a resume command for that session.
 
 Common in-chat commands:
 
@@ -160,7 +161,7 @@ let session = SessionBuilder::new()
     .await?;
 ```
 
-See [Experimental Rust embedding API](docs/embedding.md) for session creation, streamed events, approval handling, cancellation, and current limitations.
+See [Experimental Rust embedding API](docs/embedding.md) for session creation, streamed events, approval handling, cancellation, and current limitations. The desktop app is an in-repo reference embedding built on that API.
 
 ## More documentation
 

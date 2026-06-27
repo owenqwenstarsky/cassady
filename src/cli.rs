@@ -50,8 +50,17 @@ pub enum Command {
     Logout,
     /// Configure an OpenAI-compatible provider and first model.
     Setup,
+    /// Launch the Cassady desktop app in the background.
+    Desktop(DesktopArgs),
     /// Update Cassady from official GitHub releases.
     Update(UpdateArgs),
+}
+
+#[derive(Debug, Args, Clone, PartialEq, Eq)]
+pub struct DesktopArgs {
+    /// Keep the desktop process attached to this terminal for debugging.
+    #[arg(long)]
+    pub foreground: bool,
 }
 
 #[derive(Debug, Args, Clone, PartialEq, Eq)]

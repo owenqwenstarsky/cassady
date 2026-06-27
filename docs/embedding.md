@@ -2,7 +2,7 @@
 
 Cassady v0.2.6 includes an experimental Rust API for running headless agent sessions from another Rust program. The API is intended for early integrations and may change before Cassady declares a stable library contract.
 
-The embedding API uses the same provider configuration, global instructions, prompts, access modes, tools, and JSONL conversation storage as the `cass` terminal UI. By default it reads and writes under `~/.cass`, so run `cass setup` first or create compatible `config.json`, `providers.json`, and `models.json` files programmatically.
+The embedding API uses the same provider configuration, global instructions, prompts, access modes, tools, and JSONL conversation storage as the `cass` terminal UI. By default it reads and writes under `~/.cass`, so run `cass setup` first or create compatible `config.json`, `providers.json`, and `models.json` files programmatically. The v0.4.0 desktop app in `cassady-desktop/` is a reference embedding built on this API.
 
 ## Minimal example
 

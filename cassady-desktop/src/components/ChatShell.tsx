@@ -139,7 +139,7 @@ export function ChatShell({ cwd }: { cwd: string }) {
   }, [configError, chat, turn.blocks, turn.pendingApproval, cwd, handleNew]);
 
   return (
-    <div className="vignette scanlines grain relative flex h-screen flex-col bg-[var(--color-bg)]">
+    <div className="vignette scanlines grain relative flex h-screen w-screen min-w-0 flex-col overflow-hidden bg-[var(--color-bg)]">
       <TopBar
         chat={chat}
         onNewChat={() => void handleNew()}

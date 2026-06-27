@@ -25,6 +25,10 @@ pub async fn run() -> Result<()> {
         return crate::update::run(args).await;
     }
 
+    if let Some(Command::Desktop(args)) = cli.command.clone() {
+        return crate::desktop::launch(&cli, &args);
+    }
+
     if matches!(cli.command, Some(Command::Check)) {
         let report = crate::check::run(&cli)?;
         print!("{}", report.render());
