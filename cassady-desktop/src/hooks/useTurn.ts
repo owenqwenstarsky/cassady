@@ -16,7 +16,8 @@ export type BlockKind =
   | "assistant"
   | "reasoning"
   | "tool"
-  | "status";
+  | "status"
+  | "error";
 
 export interface TranscriptBlock {
   id: string;
@@ -130,6 +131,8 @@ export interface UseTurn {
   resolveApproval: (approved: boolean) => Promise<void>;
   reset: () => void;
   setStatusHint: (text: string) => void;
+  pushNotice: (text: string, kind: "status" | "error") => void;
+  queueAfterLoad: (pending: { status?: string; notice?: { text: string; kind: "status" | "error" } }) => void;
 }
 
 export function useTurn(chat: ConversationInfo | null): UseTurn {
@@ -145,6 +148,10 @@ export function useTurn(chat: ConversationInfo | null): UseTurn {
   const loadSeqRef = useRef(0);
   const streamSeqRef = useRef(0);
   const chatRef = useRef<ConversationInfo | null>(chat);
+  const pendingAfterLoadRef = useRef<{
+    status?: string;
+    notice?: { text: string; kind: "status" | "error" };
+  } | null>(null);
   chatRef.current = chat;
 
   const appendBlock = useCallback((block: TranscriptBlock) => {
@@ -364,6 +371,17 @@ export function useTurn(chat: ConversationInfo | null): UseTurn {
     setStatus(text);
   }, []);
 
+  const pushNotice = useCallback((text: string, kind: "status" | "error") => {
+    appendBlock({ id: nextBlockId(), kind, text });
+  }, [appendBlock]);
+
+  const queueAfterLoad = useCallback(
+    (pending: { status?: string; notice?: { text: string; kind: "status" | "error" } }) => {
+      pendingAfterLoadRef.current = pending;
+    },
+    [],
+  );
+
   useEffect(() => {
     const chatId = chat?.id;
     const loadSeq = loadSeqRef.current + 1;
@@ -383,6 +401,16 @@ export function useTurn(chat: ConversationInfo | null): UseTurn {
         const records = await sessionRecords(chatId);
         if (loadSeqRef.current === loadSeq && chatRef.current?.id === chatId) {
           setBlocks(blocksFromRecords(records));
+          const pending = pendingAfterLoadRef.current;
+          if (pending) {
+            pendingAfterLoadRef.current = null;
+            if (pending.notice) {
+              appendBlock({ id: nextBlockId(), kind: pending.notice.kind, text: pending.notice.text });
+            }
+            if (pending.status) {
+              setStatus(pending.status);
+            }
+          }
         }
       } catch (e) {
         if (loadSeqRef.current === loadSeq && chatRef.current?.id === chatId) {
@@ -404,5 +432,7 @@ export function useTurn(chat: ConversationInfo | null): UseTurn {
     resolveApproval,
     reset,
     setStatusHint,
+    pushNotice,
+    queueAfterLoad,
   };
 }

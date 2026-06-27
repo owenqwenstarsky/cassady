@@ -1,16 +1,13 @@
 use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
 use crate::cli::{self, Cli, Command};
-use crate::config::{self, Config, FastModeState, ModelDefinition, ReasoningEffort};
+use crate::config::{self, Config, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
-use crate::prompt;
-use crate::ui::autofill::{AutoFillItem, AutoFillMenu};
 use crate::ui::events::poll_event;
 use crate::ui::render::{self, TranscriptBlock, TranscriptKind};
 use crate::ui::terminal;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -95,7 +92,7 @@ pub async fn run() -> Result<()> {
     let (conversation, warning) = if let Some(Some(id)) = cli.resume.clone() {
         Conversation::load(&config.conversations_dir(), &id)?
     } else {
-        (create_new_conversation(&config, &cwd)?, None)
+        (crate::commands::create_new(&config, &cwd)?, None)
     };
 
     run_tui(config, cwd, conversation, warning, cli).await
@@ -108,12 +105,6 @@ fn resolve_cwd(cwd: Option<PathBuf>) -> Result<PathBuf> {
         .with_context(|| format!("resolving cwd {}", cwd.display()))?;
     std::env::set_current_dir(&cwd)?;
     Ok(cwd)
-}
-
-fn create_new_conversation(config: &Config, cwd: &Path) -> Result<Conversation> {
-    let global = fs::read_to_string(config.global_path()).ok();
-    let base = prompt::build_base_system_prompt(global.as_deref());
-    Conversation::create(&config.conversations_dir(), &config.model, cwd, base)
 }
 
 fn list_chats(config: &Config, cwd: &std::path::Path) -> Result<()> {
@@ -363,7 +354,7 @@ async fn run_tui(
             status = finished_status;
         }
 
-        let autofill = build_autofill(&input, autofill_selected, &config, &cwd)?;
+        let autofill = crate::commands::build_autofill(&input, autofill_selected, &config, &cwd)?;
         autofill_selected = autofill.as_ref().map(|m| m.selected).unwrap_or(0);
         scroll = if stick_to_bottom {
             bottom_scroll(
@@ -550,9 +541,9 @@ async fn run_tui(
                                 .map(|t| now.duration_since(t) <= Duration::from_millis(1500))
                                 .unwrap_or(false)
                             {
-                                match BranchMenuState::open(&config, &conversation) {
-                                    Ok(menu) => {
-                                        branch_menu = Some(menu);
+                                match crate::commands::branch_family(&config, &conversation) {
+                                    Ok(family) => {
+                                        branch_menu = Some(BranchMenuState::from_family(family));
                                         last_esc = None;
                                         status = "branch/restore menu".into();
                                     }
@@ -700,227 +691,26 @@ async fn run_tui(
                             } else if input.trim().is_empty() {
                                 input.clear();
                             } else if input.trim_start().starts_with('/') {
-                                match parse_local_command(&input) {
-                                    Ok(LocalCommand::Branch) => {
-                                        if busy {
-                                            status = "branch menu can be opened when idle".into();
-                                        } else {
-                                            match BranchMenuState::open(&config, &conversation) {
-                                                Ok(menu) => {
-                                                    branch_menu = Some(menu);
-                                                    input.clear();
-                                                    autofill_selected = 0;
-                                                    status = "branch/restore menu".into();
-                                                }
-                                                Err(err) => {
-                                                    status = format!("branch menu failed: {err}");
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Error,
-                                                        title: "branch".into(),
-                                                        content: err.to_string(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Ok(LocalCommand::Login) => {
-                                        if busy {
-                                            status = "login can be opened when idle".into();
-                                        } else {
-                                            input.clear();
-                                            autofill_selected = 0;
-                                            match run_login_menu_from_tui(&mut terminal, &cli).await
-                                            {
-                                                Ok(_) => match Config::load(&cli) {
-                                                    Ok(updated) => {
-                                                        config = updated;
-                                                        reasoning_effort = config.reasoning_effort;
-                                                        provider_ready = true;
-                                                        let content = format!(
-                                                            "active provider: {}\nactive model: {}",
-                                                            config.provider_id, config.model
-                                                        );
-                                                        transcript.push(TranscriptBlock {
-                                                            kind: TranscriptKind::Status,
-                                                            title: "login".into(),
-                                                            content,
-                                                        });
-                                                        status = "login updated".into();
-                                                    }
-                                                    Err(err) => {
-                                                        provider_ready = false;
-                                                        status = format!(
-                                                            "login saved with issues: {err}"
-                                                        );
-                                                        transcript.push(TranscriptBlock {
-                                                            kind: TranscriptKind::Error,
-                                                            title: "login".into(),
-                                                            content: format!(
-                                                                "Provider config could not be loaded: {err}"
-                                                            ),
-                                                        });
-                                                    }
-                                                },
-                                                Err(err) => {
-                                                    status = format!("login cancelled: {err}");
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Error,
-                                                        title: "login".into(),
-                                                        content: err.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            if stick_to_bottom {
-                                                scroll = bottom_scroll(
-                                                    &terminal,
-                                                    &input,
-                                                    &transcript,
-                                                    show_full_tools,
-                                                    show_reasoning,
-                                                )?;
-                                            }
-                                        }
-                                    }
-                                    Ok(LocalCommand::Logout) => {
-                                        if busy {
-                                            status = "logout can be opened when idle".into();
-                                        } else {
-                                            input.clear();
-                                            autofill_selected = 0;
-                                            match run_logout_menu_from_tui(
-                                                &mut terminal,
-                                                &config.root,
-                                            ) {
-                                                Ok(result) => {
-                                                    if result.removed_provider_ids.is_empty() {
-                                                        transcript.push(TranscriptBlock {
-                                                            kind: TranscriptKind::Status,
-                                                            title: "logout".into(),
-                                                            content: "logout cancelled".into(),
-                                                        });
-                                                        status = "logout cancelled".into();
-                                                    } else if result.remaining_provider_count == 0 {
-                                                        provider_ready = false;
-                                                        transcript.push(TranscriptBlock {
-                                                            kind: TranscriptKind::Status,
-                                                            title: "logout".into(),
-                                                            content: format!(
-                                                                "removed providers: {}\nremoved model entries: {}\nno providers remain; run /login before sending another message",
-                                                                result.removed_provider_ids.join(", "),
-                                                                result.removed_model_count
-                                                            ),
-                                                        });
-                                                        status = "no provider configured".into();
-                                                    } else {
-                                                        match Config::load(&cli) {
-                                                            Ok(updated) => {
-                                                                config = updated;
-                                                                reasoning_effort =
-                                                                    config.reasoning_effort;
-                                                                provider_ready = true;
-                                                                transcript.push(TranscriptBlock {
-                                                                    kind: TranscriptKind::Status,
-                                                                    title: "logout".into(),
-                                                                    content: format!(
-                                                                        "removed providers: {}\nremoved model entries: {}\nactive provider: {}\nactive model: {}",
-                                                                        result.removed_provider_ids.join(", "),
-                                                                        result.removed_model_count,
-                                                                        config.provider_id,
-                                                                        config.model
-                                                                    ),
-                                                                });
-                                                                status = "logout updated".into();
-                                                            }
-                                                            Err(err) => {
-                                                                provider_ready = false;
-                                                                status = format!(
-                                                                    "logout saved with issues: {err}"
-                                                                );
-                                                                transcript.push(TranscriptBlock {
-                                                                    kind: TranscriptKind::Error,
-                                                                    title: "logout".into(),
-                                                                    content: format!(
-                                                                        "Provider config could not be loaded: {err}"
-                                                                    ),
-                                                                });
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                Err(err) => {
-                                                    status = format!("logout cancelled: {err}");
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Error,
-                                                        title: "logout".into(),
-                                                        content: err.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            if stick_to_bottom {
-                                                scroll = bottom_scroll(
-                                                    &terminal,
-                                                    &input,
-                                                    &transcript,
-                                                    show_full_tools,
-                                                    show_reasoning,
-                                                )?;
-                                            }
-                                        }
-                                    }
-                                    Ok(LocalCommand::Fast(command)) => {
-                                        if busy {
-                                            status = "fast mode can be changed when idle".into();
-                                        } else {
-                                            input.clear();
-                                            autofill_selected = 0;
-                                            match apply_fast_mode_command(&mut config, command) {
-                                                Ok(message) => {
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Status,
-                                                        title: "fast".into(),
-                                                        content: message.clone(),
-                                                    });
-                                                    status = message;
-                                                }
-                                                Err(err) => {
-                                                    status =
-                                                        format!("fast mode update failed: {err}");
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Error,
-                                                        title: "fast".into(),
-                                                        content: err.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            if stick_to_bottom {
-                                                scroll = bottom_scroll(
-                                                    &terminal,
-                                                    &input,
-                                                    &transcript,
-                                                    show_full_tools,
-                                                    show_reasoning,
-                                                )?;
-                                            }
-                                        }
-                                    }
-                                    Ok(LocalCommand::Status) => {
-                                        let content = chat_status(
-                                            &chat_id,
-                                            &config,
-                                            mode,
-                                            &cwd,
-                                            busy,
-                                            &status,
-                                            conversation.records.len(),
-                                        );
+                                let mut ctx = crate::commands::CommandContext {
+                                    config: &mut config,
+                                    reasoning_effort: &mut reasoning_effort,
+                                    conversation: &conversation,
+                                    cwd: &cwd,
+                                    access_mode: mode,
+                                    busy,
+                                    status: &status,
+                                };
+                                let outcome = crate::commands::execute(&input, &mut ctx);
+                                match outcome {
+                                    crate::commands::CommandOutcome::Status { title, content } => {
                                         input.clear();
                                         autofill_selected = 0;
                                         transcript.push(TranscriptBlock {
                                             kind: TranscriptKind::Status,
-                                            title: "status".into(),
-                                            content,
+                                            title: title.into(),
+                                            content: content.clone(),
                                         });
-                                        status = "status shown".into();
+                                        status = content;
                                         if stick_to_bottom {
                                             scroll = bottom_scroll(
                                                 &terminal,
@@ -931,135 +721,215 @@ async fn run_tui(
                                             )?;
                                         }
                                     }
-                                    Ok(LocalCommand::Model(model)) => {
-                                        if busy {
-                                            status = "model can be changed when idle".into();
-                                        } else {
-                                            apply_model_selection(&mut config, &model)?;
-                                            reasoning_effort = ReasoningEffort::default_for_model(
-                                                config.model_metadata.as_ref(),
-                                            );
-                                            let _ = crate::config::save_last_used_provider(
-                                                &config.root,
-                                                &config.provider_id,
-                                                &config.model,
-                                                reasoning_effort,
-                                            );
-                                            input.clear();
-                                            autofill_selected = 0;
-                                            transcript.push(TranscriptBlock {
-                                                kind: TranscriptKind::Status,
-                                                title: "model".into(),
-                                                content: model_status_message(&config),
-                                            });
-                                            status = model_status_message(&config);
-                                            if stick_to_bottom {
-                                                scroll = bottom_scroll(
-                                                    &terminal,
-                                                    &input,
-                                                    &transcript,
-                                                    show_full_tools,
-                                                    show_reasoning,
-                                                )?;
-                                            }
-                                        }
+                                    crate::commands::CommandOutcome::NewChat {
+                                        conversation: new_conversation,
+                                        status: new_status,
+                                    } => {
+                                        conversation = new_conversation;
+                                        chat_id = conversation.id.clone();
+                                        transcript.clear();
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        active_assistant = None;
+                                        active_reasoning = None;
+                                        active_tools.clear();
+                                        status = new_status;
+                                        stick_to_bottom = true;
+                                        scroll = bottom_scroll(
+                                            &terminal,
+                                            &input,
+                                            &transcript,
+                                            show_full_tools,
+                                            show_reasoning,
+                                        )?;
                                     }
-                                    Ok(LocalCommand::New) => {
-                                        if busy {
-                                            status = "new chat can be created when idle".into();
-                                        } else {
-                                            match create_new_conversation(&config, &cwd) {
-                                                Ok(new_conversation) => {
-                                                    conversation = new_conversation;
-                                                    chat_id = conversation.id.clone();
-                                                    transcript.clear();
-                                                    input.clear();
-                                                    autofill_selected = 0;
-                                                    active_assistant = None;
-                                                    active_reasoning = None;
-                                                    active_tools.clear();
-                                                    status = format!("new chat {chat_id}");
-                                                    stick_to_bottom = true;
-                                                    scroll = bottom_scroll(
-                                                        &terminal,
-                                                        &input,
-                                                        &transcript,
-                                                        show_full_tools,
-                                                        show_reasoning,
-                                                    )?;
-                                                }
-                                                Err(err) => {
-                                                    status = format!("new chat failed: {err}");
-                                                    transcript.push(TranscriptBlock {
-                                                        kind: TranscriptKind::Error,
-                                                        title: "new".into(),
-                                                        content: err.to_string(),
-                                                    });
-                                                    if stick_to_bottom {
-                                                        scroll = bottom_scroll(
-                                                            &terminal,
-                                                            &input,
-                                                            &transcript,
-                                                            show_full_tools,
-                                                            show_reasoning,
-                                                        )?;
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    crate::commands::CommandOutcome::ResumedChat {
+                                        conversation: new_conversation,
+                                        warning,
+                                        status: new_status,
+                                    } => {
+                                        conversation = new_conversation;
+                                        chat_id = conversation.id.clone();
+                                        transcript = transcript_from_loaded(&conversation, warning);
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        active_assistant = None;
+                                        active_reasoning = None;
+                                        active_tools.clear();
+                                        status = new_status;
+                                        stick_to_bottom = true;
+                                        scroll = bottom_scroll(
+                                            &terminal,
+                                            &input,
+                                            &transcript,
+                                            show_full_tools,
+                                            show_reasoning,
+                                        )?;
                                     }
-                                    Ok(LocalCommand::Resume(id)) => {
-                                        if busy {
-                                            status = "chat can be resumed when idle".into();
-                                        } else {
-                                            match Conversation::load(
-                                                &config.conversations_dir(),
-                                                &id,
-                                            ) {
-                                                Ok((loaded, warning)) => {
-                                                    conversation = loaded;
-                                                    chat_id = conversation.id.clone();
-                                                    transcript = transcript_from_loaded(
-                                                        &conversation,
-                                                        warning,
+                                    crate::commands::CommandOutcome::OpenBranchPicker {
+                                        family,
+                                    } => {
+                                        branch_menu = Some(BranchMenuState::from_family(family));
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        status = "branch/restore menu".into();
+                                    }
+                                    crate::commands::CommandOutcome::OpenLoginWizard => {
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        match run_login_menu_from_tui(&mut terminal, &cli).await {
+                                            Ok(_) => match Config::load(&cli) {
+                                                Ok(updated) => {
+                                                    config = updated;
+                                                    reasoning_effort = config.reasoning_effort;
+                                                    provider_ready = true;
+                                                    let content = format!(
+                                                        "active provider: {}\nactive model: {}",
+                                                        config.provider_id, config.model
                                                     );
-                                                    input.clear();
-                                                    autofill_selected = 0;
-                                                    active_assistant = None;
-                                                    active_reasoning = None;
-                                                    active_tools.clear();
-                                                    status = format!("resumed chat {chat_id}");
-                                                    stick_to_bottom = true;
-                                                    scroll = bottom_scroll(
-                                                        &terminal,
-                                                        &input,
-                                                        &transcript,
-                                                        show_full_tools,
-                                                        show_reasoning,
-                                                    )?;
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Status,
+                                                        title: "login".into(),
+                                                        content,
+                                                    });
+                                                    status = "login updated".into();
                                                 }
                                                 Err(err) => {
-                                                    status = format!("resume failed: {err}");
+                                                    provider_ready = false;
+                                                    status =
+                                                        format!("login saved with issues: {err}");
                                                     transcript.push(TranscriptBlock {
                                                         kind: TranscriptKind::Error,
-                                                        title: "resume".into(),
-                                                        content: err.to_string(),
+                                                        title: "login".into(),
+                                                        content: format!(
+                                                            "Provider config could not be loaded: {err}"
+                                                        ),
                                                     });
-                                                    if stick_to_bottom {
-                                                        scroll = bottom_scroll(
-                                                            &terminal,
-                                                            &input,
-                                                            &transcript,
-                                                            show_full_tools,
-                                                            show_reasoning,
-                                                        )?;
+                                                }
+                                            },
+                                            Err(err) => {
+                                                status = format!("login cancelled: {err}");
+                                                transcript.push(TranscriptBlock {
+                                                    kind: TranscriptKind::Error,
+                                                    title: "login".into(),
+                                                    content: err.to_string(),
+                                                });
+                                            }
+                                        }
+                                        if stick_to_bottom {
+                                            scroll = bottom_scroll(
+                                                &terminal,
+                                                &input,
+                                                &transcript,
+                                                show_full_tools,
+                                                show_reasoning,
+                                            )?;
+                                        }
+                                    }
+                                    crate::commands::CommandOutcome::OpenLogoutPicker {
+                                        ..
+                                    } => {
+                                        input.clear();
+                                        autofill_selected = 0;
+                                        match run_logout_menu_from_tui(&mut terminal, &config.root)
+                                        {
+                                            Ok(result) => {
+                                                if result.removed_provider_ids.is_empty() {
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Status,
+                                                        title: "logout".into(),
+                                                        content: "logout cancelled".into(),
+                                                    });
+                                                    status = "logout cancelled".into();
+                                                } else if result.remaining_provider_count == 0 {
+                                                    provider_ready = false;
+                                                    transcript.push(TranscriptBlock {
+                                                        kind: TranscriptKind::Status,
+                                                        title: "logout".into(),
+                                                        content: format!(
+                                                            "removed providers: {}\nremoved model entries: {}\nno providers remain; run /login before sending another message",
+                                                            result.removed_provider_ids.join(", "),
+                                                            result.removed_model_count
+                                                        ),
+                                                    });
+                                                    status = "no provider configured".into();
+                                                } else {
+                                                    match Config::load(&cli) {
+                                                        Ok(updated) => {
+                                                            config = updated;
+                                                            reasoning_effort =
+                                                                config.reasoning_effort;
+                                                            provider_ready = true;
+                                                            transcript.push(TranscriptBlock {
+                                                                kind: TranscriptKind::Status,
+                                                                title: "logout".into(),
+                                                                content: format!(
+                                                                    "removed providers: {}\nremoved model entries: {}\nactive provider: {}\nactive model: {}",
+                                                                    result.removed_provider_ids.join(", "),
+                                                                    result.removed_model_count,
+                                                                    config.provider_id,
+                                                                    config.model
+                                                                ),
+                                                            });
+                                                            status = "logout updated".into();
+                                                        }
+                                                        Err(err) => {
+                                                            provider_ready = false;
+                                                            status = format!(
+                                                                "logout saved with issues: {err}"
+                                                            );
+                                                            transcript.push(TranscriptBlock {
+                                                                kind: TranscriptKind::Error,
+                                                                title: "logout".into(),
+                                                                content: format!(
+                                                                    "Provider config could not be loaded: {err}"
+                                                                ),
+                                                            });
+                                                        }
                                                     }
                                                 }
                                             }
+                                            Err(err) => {
+                                                status = format!("logout cancelled: {err}");
+                                                transcript.push(TranscriptBlock {
+                                                    kind: TranscriptKind::Error,
+                                                    title: "logout".into(),
+                                                    content: err.to_string(),
+                                                });
+                                            }
+                                        }
+                                        if stick_to_bottom {
+                                            scroll = bottom_scroll(
+                                                &terminal,
+                                                &input,
+                                                &transcript,
+                                                show_full_tools,
+                                                show_reasoning,
+                                            )?;
                                         }
                                     }
-                                    Err(err) => {
-                                        status = err;
+                                    crate::commands::CommandOutcome::Busy(msg) => {
+                                        status = msg;
+                                    }
+                                    crate::commands::CommandOutcome::ParseError(msg) => {
+                                        status = msg;
+                                    }
+                                    crate::commands::CommandOutcome::Error { title, message } => {
+                                        status = message.clone();
+                                        transcript.push(TranscriptBlock {
+                                            kind: TranscriptKind::Error,
+                                            title: title.into(),
+                                            content: message,
+                                        });
+                                        if stick_to_bottom {
+                                            scroll = bottom_scroll(
+                                                &terminal,
+                                                &input,
+                                                &transcript,
+                                                show_full_tools,
+                                                show_reasoning,
+                                            )?;
+                                        }
                                     }
                                 }
                             } else if busy {
@@ -1244,13 +1114,12 @@ enum BranchMenuOutcome {
 }
 
 impl BranchMenuState {
-    fn open(config: &Config, conversation: &Conversation) -> Result<Self> {
-        let family = crate::branch::load_family(&config.conversations_dir(), conversation)?;
-        Ok(Self {
+    fn from_family(family: crate::branch::BranchFamily) -> Self {
+        Self {
             mode: BranchMenuMode::Main,
             selected: 0,
             family,
-        })
+        }
     }
 
     fn overlay_view(&self) -> render::OverlayView {
@@ -1465,15 +1334,11 @@ fn apply_branch_menu_selection(
                     status,
                 ),
                 2 => {
-                    let plan = crate::file_edits::plan_restore(
-                        &config.root,
-                        &checkpoint.chat_id,
-                        checkpoint.record_index,
-                    )?;
+                    let summary = crate::commands::preview_restore_plan(config, &checkpoint)?;
                     transcript.push(TranscriptBlock {
                         kind: TranscriptKind::Status,
                         title: "restore preview".into(),
-                        content: crate::file_edits::summarize_plan(&plan),
+                        content: summary,
                     });
                     *status = "restore plan previewed".into();
                     *menu = None;
@@ -1503,48 +1368,28 @@ fn branch_from_checkpoint(
     active_tools: &mut HashMap<String, usize>,
     status: &mut String,
 ) -> Result<BranchMenuOutcome> {
-    let (source, _) = Conversation::load(&config.conversations_dir(), &checkpoint.chat_id)?;
-    let branch = crate::branch::create_branch(&config.conversations_dir(), &source, checkpoint)?;
-    let old_id = checkpoint.chat_id.clone();
-    *conversation = branch;
+    let outcome =
+        crate::commands::create_branch_from_checkpoint(config, checkpoint, restore_files)?;
+    *conversation = outcome.conversation;
     *chat_id = conversation.id.clone();
     *transcript = transcript_from_loaded(conversation, None);
     *active_assistant = None;
     *active_reasoning = None;
     active_tools.clear();
 
-    let mut restore_status = String::new();
-    if restore_files {
-        let plan = crate::file_edits::plan_restore(
-            &config.root,
-            &checkpoint.chat_id,
-            checkpoint.record_index,
-        )?;
-        let summary = crate::file_edits::summarize_plan(&plan);
-        let outcome = crate::file_edits::apply_restore_plan(&plan)?;
-        restore_status = format!(
-            "; restored files: {} applied, {} skipped, {} conflicts",
-            outcome.applied, outcome.skipped, outcome.conflicts
-        );
+    if let Some(restore) = outcome.restore {
         transcript.push(TranscriptBlock {
-            kind: if outcome.conflicts == 0 {
-                TranscriptKind::Status
-            } else {
+            kind: if restore.is_error() {
                 TranscriptKind::Error
+            } else {
+                TranscriptKind::Status
             },
             title: "file restore".into(),
-            content: format!(
-                "{summary}\n\nApplied: {}\nSkipped: {}\nConflicts: {}",
-                outcome.applied, outcome.skipped, outcome.conflicts
-            ),
+            content: restore.transcript_content(),
         });
     }
 
-    *status = format!(
-        "branched {chat_id} from {old_id} at {}{}",
-        crate::branch::checkpoint_title(checkpoint),
-        restore_status
-    );
+    *status = outcome.status;
     *menu = None;
     Ok(BranchMenuOutcome::Changed)
 }
@@ -1922,477 +1767,6 @@ fn assistant_content_matches(a: &str, b: &str) -> bool {
     a == b || (!a.trim().is_empty() && a.trim() == b.trim())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum LocalCommand {
-    Branch,
-    Fast(FastModeCommand),
-    Login,
-    Logout,
-    Model(String),
-    New,
-    Resume(String),
-    Status,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FastModeCommand {
-    Toggle,
-    On,
-    Off,
-    Status,
-}
-
-struct CommandSpec {
-    name: &'static str,
-    usage: &'static str,
-    description: &'static str,
-    takes_value: bool,
-}
-
-const COMMANDS: &[CommandSpec] = &[
-    CommandSpec {
-        name: "branch",
-        usage: "/branch",
-        description: "open branch/restore menu",
-        takes_value: false,
-    },
-    CommandSpec {
-        name: "fast",
-        usage: "/fast [on|off|status]",
-        description: "toggle faster Codex inference when supported",
-        takes_value: false,
-    },
-    CommandSpec {
-        name: "login",
-        usage: "/login",
-        description: "configure provider login settings",
-        takes_value: false,
-    },
-    CommandSpec {
-        name: "logout",
-        usage: "/logout",
-        description: "remove saved providers and models",
-        takes_value: false,
-    },
-    CommandSpec {
-        name: "model",
-        usage: "/model <model>",
-        description: "switch the model for future turns",
-        takes_value: true,
-    },
-    CommandSpec {
-        name: "new",
-        usage: "/new",
-        description: "create a new chat",
-        takes_value: false,
-    },
-    CommandSpec {
-        name: "resume",
-        usage: "/resume <chat>",
-        description: "resume a chat from this directory",
-        takes_value: true,
-    },
-    CommandSpec {
-        name: "status",
-        usage: "/status",
-        description: "show chat status",
-        takes_value: false,
-    },
-];
-
-fn build_autofill(
-    input: &str,
-    selected: usize,
-    config: &Config,
-    cwd: &Path,
-) -> Result<Option<AutoFillMenu>> {
-    if input.contains('\n') || !input.starts_with('/') {
-        return Ok(None);
-    }
-
-    if let Some(menu) = command_autofill(input, selected) {
-        return Ok(Some(menu));
-    }
-
-    if let Some(menu) = model_autofill(input, selected, config)? {
-        return Ok(Some(menu));
-    }
-
-    resume_chat_autofill(input, selected, config, cwd)
-}
-
-fn command_autofill(input: &str, selected: usize) -> Option<AutoFillMenu> {
-    if !input.starts_with('/') || input[1..].chars().any(char::is_whitespace) {
-        return None;
-    }
-    if COMMANDS
-        .iter()
-        .any(|spec| !spec.takes_value && input == format!("/{}", spec.name))
-    {
-        return None;
-    }
-
-    let query = input[1..].to_ascii_lowercase();
-    let mut items = Vec::new();
-    for spec in COMMANDS {
-        if spec.name.starts_with(&query) || spec.usage[1..].starts_with(&query) {
-            let insert = if spec.takes_value {
-                format!("/{} ", spec.name)
-            } else {
-                format!("/{}", spec.name)
-            };
-            items.push(
-                AutoFillItem::new(spec.usage, insert).with_detail(spec.description.to_string()),
-            );
-        }
-    }
-
-    if items.is_empty() {
-        None
-    } else {
-        Some(AutoFillMenu::new("Commands", 0, input.len(), items).with_selected(selected))
-    }
-}
-
-fn model_autofill(input: &str, selected: usize, config: &Config) -> Result<Option<AutoFillMenu>> {
-    let Some(rest) = input.strip_prefix("/model") else {
-        return Ok(None);
-    };
-    if rest.is_empty() || !rest.chars().next().is_some_and(|c| c.is_whitespace()) {
-        return Ok(None);
-    }
-
-    let arg = rest.trim_start_matches(char::is_whitespace);
-    if arg.chars().any(char::is_whitespace) {
-        return Ok(None);
-    }
-    let replacement_start = input.len() - arg.len();
-    let query = arg.to_ascii_lowercase();
-
-    let models = crate::config::load_or_create_default_model_registry(&config.root)?;
-    if !arg.is_empty() && models.models.iter().any(|model| model.id == arg) {
-        return Ok(None);
-    }
-
-    let mut items = Vec::new();
-    for model in models.models {
-        if model_matches(&model, &query) {
-            let id = model.id.clone();
-            let detail = model_detail(&model, &config.model);
-            items.push(AutoFillItem::new(id.clone(), id).with_detail(detail));
-        }
-    }
-
-    if items.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(
-            AutoFillMenu::new("Models", replacement_start, input.len(), items)
-                .with_selected(selected),
-        ))
-    }
-}
-
-fn apply_model_selection(config: &mut Config, model_id: &str) -> Result<()> {
-    let models = crate::config::load_or_create_default_model_registry(&config.root)?;
-    let metadata = models
-        .models
-        .iter()
-        .find(|model| model.id == model_id && model.provider == config.provider_id)
-        .cloned()
-        .or_else(|| {
-            models
-                .models
-                .iter()
-                .find(|model| model.id == model_id)
-                .cloned()
-        });
-
-    if let Some(model) = &metadata {
-        if model.provider != config.provider_id {
-            let providers = crate::config::load_or_create_default_provider_registry(&config.root)?;
-            if let Some(provider) = providers
-                .providers
-                .iter()
-                .find(|provider| provider.id == model.provider)
-            {
-                config.provider_id = provider.id.clone();
-                config.active_provider = provider.to_resolved();
-            }
-        }
-    }
-
-    config.model = model_id.to_string();
-    config.model_metadata = metadata;
-    Ok(())
-}
-
-fn model_matches(model: &ModelDefinition, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    model.id.to_ascii_lowercase().contains(query)
-        || model.provider.to_ascii_lowercase().contains(query)
-        || model
-            .display_name
-            .as_ref()
-            .is_some_and(|name| name.to_ascii_lowercase().contains(query))
-}
-
-fn model_detail(model: &ModelDefinition, current_model: &str) -> String {
-    let mut parts = Vec::new();
-    if model.id == current_model {
-        parts.push("current".to_string());
-    }
-    if let Some(name) = &model.display_name {
-        if !name.trim().is_empty() && name != &model.id {
-            parts.push(name.clone());
-        }
-    }
-    parts.push(format!("provider {}", model.provider));
-    if let Some(context_length) = model.context_length {
-        parts.push(format!("ctx {context_length}"));
-    }
-    if let Some(max_output_tokens) = model.max_output_tokens {
-        parts.push(format!("max {max_output_tokens}"));
-    }
-    if !model.supports_tools {
-        parts.push("no tools".to_string());
-    }
-    if !model.supports_streaming {
-        parts.push("no streaming".to_string());
-    }
-    if model.reasoning.supported {
-        let label = if model.reasoning.required {
-            format!("reasoning {} required", model.reasoning.default_effort)
-        } else {
-            format!("reasoning {}", model.reasoning.default_effort)
-        };
-        parts.push(label);
-    } else {
-        parts.push("no reasoning".to_string());
-    }
-    parts.join(" · ")
-}
-
-fn resume_chat_autofill(
-    input: &str,
-    selected: usize,
-    config: &Config,
-    cwd: &Path,
-) -> Result<Option<AutoFillMenu>> {
-    let Some(rest) = input.strip_prefix("/resume") else {
-        return Ok(None);
-    };
-    if rest.is_empty() || !rest.chars().next().is_some_and(|c| c.is_whitespace()) {
-        return Ok(None);
-    }
-
-    let arg = rest.trim_start_matches(char::is_whitespace);
-    if arg.chars().any(char::is_whitespace) {
-        return Ok(None);
-    }
-    let replacement_start = input.len() - arg.len();
-    let query = arg.to_ascii_lowercase();
-
-    let chats = conversation::list_chats(&config.conversations_dir(), cwd)?;
-    if !arg.is_empty() && chats.iter().any(|chat| chat.id == arg) {
-        return Ok(None);
-    }
-
-    let mut items = Vec::new();
-    for chat in chats {
-        if chat_matches(&chat, &query) {
-            let detail = chat_detail(&chat);
-            items.push(AutoFillItem::new(chat.id.clone(), chat.id).with_detail(detail));
-        }
-    }
-
-    if items.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(
-            AutoFillMenu::new("Chats", replacement_start, input.len(), items)
-                .with_selected(selected),
-        ))
-    }
-}
-
-fn chat_matches(chat: &conversation::ChatSummary, query: &str) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-    chat.id.to_ascii_lowercase().contains(query)
-        || chat.created_at.to_ascii_lowercase().contains(query)
-        || chat.model.to_ascii_lowercase().contains(query)
-        || chat.first_user_preview.to_ascii_lowercase().contains(query)
-}
-
-fn chat_detail(chat: &conversation::ChatSummary) -> String {
-    let mut parts = vec![chat.created_at.clone(), short_model_name(&chat.model)];
-    if !chat.first_user_preview.is_empty() {
-        parts.push(chat.first_user_preview.clone());
-    }
-    parts.join(" · ")
-}
-
-fn short_model_name(model: &str) -> String {
-    model.rsplit('/').next().unwrap_or(model).to_string()
-}
-
-fn parse_local_command(input: &str) -> std::result::Result<LocalCommand, String> {
-    let trimmed = input.trim();
-    let mut parts = trimmed.split_whitespace();
-    let Some(command) = parts.next() else {
-        return Err("empty command".into());
-    };
-
-    match command {
-        "/branch" | "/restore" => {
-            if parts.next().is_some() {
-                return Err("usage: /branch".into());
-            }
-            Ok(LocalCommand::Branch)
-        }
-        "/fast" => {
-            let command = match parts.next() {
-                None => FastModeCommand::Toggle,
-                Some("on") => FastModeCommand::On,
-                Some("off") => FastModeCommand::Off,
-                Some("status") => FastModeCommand::Status,
-                Some(_) => return Err("usage: /fast [on|off|status]".into()),
-            };
-            if parts.next().is_some() {
-                return Err("usage: /fast [on|off|status]".into());
-            }
-            Ok(LocalCommand::Fast(command))
-        }
-        "/login" => {
-            if parts.next().is_some() {
-                return Err("usage: /login".into());
-            }
-            Ok(LocalCommand::Login)
-        }
-        "/logout" => {
-            if parts.next().is_some() {
-                return Err("usage: /logout".into());
-            }
-            Ok(LocalCommand::Logout)
-        }
-        "/model" => {
-            let Some(model) = parts.next() else {
-                return Err("usage: /model <model>".into());
-            };
-            if parts.next().is_some() {
-                return Err("usage: /model <model>".into());
-            }
-            Ok(LocalCommand::Model(model.to_string()))
-        }
-        "/resume" => {
-            let Some(chat) = parts.next() else {
-                return Err("usage: /resume <chat>".into());
-            };
-            if parts.next().is_some() {
-                return Err("usage: /resume <chat>".into());
-            }
-            Ok(LocalCommand::Resume(chat.to_string()))
-        }
-        "/new" => {
-            if parts.next().is_some() {
-                return Err("usage: /new".into());
-            }
-            Ok(LocalCommand::New)
-        }
-        "/status" => {
-            if parts.next().is_some() {
-                return Err("usage: /status".into());
-            }
-            Ok(LocalCommand::Status)
-        }
-        other => Err(format!("unknown command: {other}")),
-    }
-}
-
-fn chat_status(
-    chat_id: &str,
-    config: &Config,
-    mode: crate::access::AccessMode,
-    cwd: &Path,
-    busy: bool,
-    status: &str,
-    record_count: usize,
-) -> String {
-    format!(
-        "chat: {chat_id}\nstate: {}\nmodel: {}\nfast: {}\nmode: {mode}\ncwd: {}\nrecords: {record_count}\nstatus: {}",
-        if busy { "running" } else { "idle" },
-        config.model,
-        fast_mode_status(&config.fast_mode_state()),
-        cwd.display(),
-        if status.is_empty() { "idle" } else { status }
-    )
-}
-
-fn apply_fast_mode_command(config: &mut Config, command: FastModeCommand) -> Result<String> {
-    match command {
-        FastModeCommand::Status => Ok(fast_mode_status(&config.fast_mode_state())),
-        FastModeCommand::Toggle | FastModeCommand::On | FastModeCommand::Off => {
-            let enabled = match command {
-                FastModeCommand::Toggle => !config.default_fast_mode,
-                FastModeCommand::On => true,
-                FastModeCommand::Off => false,
-                FastModeCommand::Status => unreachable!(),
-            };
-            crate::config::save_fast_mode_preference(&config.root, enabled)?;
-            config.default_fast_mode = enabled;
-            Ok(fast_mode_change_message(&config.fast_mode_state()))
-        }
-    }
-}
-
-fn fast_mode_change_message(state: &FastModeState) -> String {
-    if state.active {
-        "fast mode enabled".into()
-    } else if state.preferred {
-        format!(
-            "fast mode preference on; unavailable for {}",
-            state
-                .unavailable_reason
-                .as_deref()
-                .unwrap_or("this provider/model")
-        )
-    } else {
-        "fast mode off".into()
-    }
-}
-
-fn fast_mode_status(state: &FastModeState) -> String {
-    if state.active {
-        "enabled".into()
-    } else if state.preferred {
-        format!(
-            "preferred, unavailable for {}",
-            state
-                .unavailable_reason
-                .as_deref()
-                .unwrap_or("this provider/model")
-        )
-    } else {
-        "off".into()
-    }
-}
-
-fn model_status_message(config: &Config) -> String {
-    let model = &config.model;
-    let state = config.fast_mode_state();
-    if state.active {
-        format!("model: {model} · fast enabled")
-    } else if state.preferred {
-        format!("model: {model} · fast unavailable")
-    } else {
-        format!("model: {model}")
-    }
-}
-
 fn transcript_from_loaded(
     conversation: &Conversation,
     warning: Option<String>,
@@ -2646,17 +2020,6 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn config_with_models(models_json: &str) -> (tempfile::TempDir, Config) {
-        let root = tempdir().unwrap();
-        std::fs::write(root.path().join("models.json"), models_json).unwrap();
-        let config = Config {
-            root: root.path().to_path_buf(),
-            model: "alpha-model".to_string(),
-            ..Config::default()
-        };
-        (root, config)
-    }
-
     #[test]
     fn summarize_edit_args_uses_edits() {
         let summary = summarize_tool_arguments(
@@ -2775,115 +2138,6 @@ mod tests {
     }
 
     #[test]
-    fn command_autofill_lists_new_command_and_hides_exact_match() {
-        let menu = command_autofill("/n", 0).unwrap();
-
-        assert_eq!(menu.items.len(), 1);
-        assert_eq!(menu.items[0].label, "/new");
-        assert_eq!(menu.items[0].insert, "/new");
-        assert_eq!(menu.apply("/n").unwrap(), "/new");
-        assert!(command_autofill("/new", 0).is_none());
-    }
-
-    #[test]
-    fn command_autofill_lists_login_and_logout_commands() {
-        let menu = command_autofill("/log", 0).unwrap();
-
-        let labels = menu
-            .items
-            .iter()
-            .map(|item| item.label.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(labels, vec!["/login", "/logout"]);
-        assert_eq!(menu.items[0].insert, "/login");
-        assert_eq!(menu.items[1].insert, "/logout");
-    }
-
-    #[test]
-    fn parse_local_command_accepts_new_without_args() {
-        assert_eq!(parse_local_command("/new").unwrap(), LocalCommand::New);
-        assert_eq!(parse_local_command("/new extra"), Err("usage: /new".into()));
-    }
-
-    #[test]
-    fn parse_local_command_accepts_login_and_logout_without_args() {
-        assert_eq!(parse_local_command("/login").unwrap(), LocalCommand::Login);
-        assert_eq!(
-            parse_local_command("/logout").unwrap(),
-            LocalCommand::Logout
-        );
-        assert_eq!(
-            parse_local_command("/login extra"),
-            Err("usage: /login".into())
-        );
-        assert_eq!(
-            parse_local_command("/logout extra"),
-            Err("usage: /logout".into())
-        );
-    }
-
-    #[test]
-    fn parse_local_command_accepts_fast_forms() {
-        assert_eq!(
-            parse_local_command("/fast").unwrap(),
-            LocalCommand::Fast(FastModeCommand::Toggle)
-        );
-        assert_eq!(
-            parse_local_command("/fast on").unwrap(),
-            LocalCommand::Fast(FastModeCommand::On)
-        );
-        assert_eq!(
-            parse_local_command("/fast off").unwrap(),
-            LocalCommand::Fast(FastModeCommand::Off)
-        );
-        assert_eq!(
-            parse_local_command("/fast status").unwrap(),
-            LocalCommand::Fast(FastModeCommand::Status)
-        );
-        assert_eq!(
-            parse_local_command("/fast maybe"),
-            Err("usage: /fast [on|off|status]".into())
-        );
-    }
-
-    #[test]
-    fn fast_mode_status_distinguishes_preference_and_activation() {
-        let mut config = Config {
-            default_fast_mode: true,
-            ..Config::default()
-        };
-
-        assert_eq!(
-            fast_mode_status(&config.fast_mode_state()),
-            "preferred, unavailable for provider fireworks"
-        );
-
-        config.provider_id = config::CHATGPT_CODEX_PROVIDER_ID.into();
-        config.active_provider.kind = config::CHATGPT_CODEX_PROVIDER_KIND.into();
-        config.model = config::CHATGPT_CODEX_DEFAULT_MODEL.into();
-        config.model_metadata = Some(config::ModelDefinition {
-            id: config::CHATGPT_CODEX_DEFAULT_MODEL.into(),
-            provider: config::CHATGPT_CODEX_PROVIDER_ID.into(),
-            display_name: None,
-            context_length: None,
-            max_output_tokens: None,
-            supports_tools: true,
-            supports_streaming: true,
-            reasoning: Default::default(),
-            fast_mode: config::FastModeMetadata { supported: true },
-        });
-
-        assert_eq!(fast_mode_status(&config.fast_mode_state()), "enabled");
-        assert_eq!(
-            model_status_message(&config),
-            format!(
-                "model: {} · fast enabled",
-                config::CHATGPT_CODEX_DEFAULT_MODEL
-            )
-        );
-    }
-
-    #[test]
     fn cancelled_turn_repairs_missing_tool_results() {
         let root = tempdir().unwrap();
         let cwd = tempdir().unwrap();
@@ -2953,62 +2207,6 @@ mod tests {
             Some(Record::Assistant { content, tool_calls, .. })
                 if content == TURN_CANCELLED_MESSAGE && tool_calls.is_empty()
         ));
-    }
-
-    #[test]
-    fn model_autofill_lists_models_from_models_json() {
-        let (_root, config) = config_with_models(
-            r#"{
-  "models": [
-    {
-      "id": "alpha-model",
-      "provider": "fireworks",
-      "display_name": "Alpha Model",
-      "context_length": 1000,
-      "max_output_tokens": 200
-    },
-    {
-      "id": "beta-model",
-      "provider": "other",
-      "display_name": "Beta Model"
-    }
-  ]
-}
-"#,
-        );
-
-        let menu = model_autofill("/model ", 0, &config).unwrap().unwrap();
-
-        assert_eq!(menu.items.len(), 2);
-        assert_eq!(menu.items[0].label, "alpha-model");
-        assert_eq!(menu.items[0].insert, "alpha-model");
-        assert_eq!(menu.apply("/model ").unwrap(), "/model alpha-model");
-        let detail = menu.items[0].detail.as_deref().unwrap();
-        assert!(detail.contains("current"));
-        assert!(detail.contains("Alpha Model"));
-        assert!(detail.contains("provider fireworks"));
-    }
-
-    #[test]
-    fn model_autofill_filters_and_hides_exact_matches() {
-        let (_root, config) = config_with_models(
-            r#"{
-  "models": [
-    { "id": "alpha-model", "provider": "fireworks" },
-    { "id": "beta-model", "provider": "other", "display_name": "Beta Model" }
-  ]
-}
-"#,
-        );
-
-        let menu = model_autofill("/model beta", 0, &config).unwrap().unwrap();
-        assert_eq!(menu.items.len(), 1);
-        assert_eq!(menu.items[0].insert, "beta-model");
-        assert_eq!(menu.apply("/model beta").unwrap(), "/model beta-model");
-
-        assert!(model_autofill("/model alpha-model", 0, &config)
-            .unwrap()
-            .is_none());
     }
 
     #[test]

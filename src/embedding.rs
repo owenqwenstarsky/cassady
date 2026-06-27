@@ -7,10 +7,7 @@
 
 use crate::access::AccessMode;
 use crate::agent::{self, AgentCommand, AgentEvent, AgentSettings};
-use crate::config::{
-    load_or_create_default_model_registry, load_or_create_default_provider_registry, Config,
-    ConfigOverrides, ReasoningEffort,
-};
+use crate::config::{Config, ConfigOverrides, ReasoningEffort};
 use crate::conversation::{self, Conversation, Record};
 use crate::prompt;
 use serde_json::Value;
@@ -183,18 +180,6 @@ struct PreparedSession {
     reasoning_effort: ReasoningEffort,
 }
 
-fn find_session_model<'a>(
-    models: &'a crate::config::ModelsFile,
-    current_provider_id: &str,
-    model_id: &str,
-) -> Option<&'a crate::config::ModelDefinition> {
-    models
-        .models
-        .iter()
-        .find(|model| model.provider == current_provider_id && model.id == model_id)
-        .or_else(|| models.models.iter().find(|model| model.id == model_id))
-}
-
 #[derive(Debug)]
 pub struct Session {
     config: Config,
@@ -230,6 +215,30 @@ impl Session {
         self.reasoning_effort
     }
 
+    /// Borrow the resolved config (read-only).
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Mutably borrow the resolved config. Hosts (e.g. the desktop slash
+    /// command surface) use this to apply `/fast` and `/model` changes through
+    /// `crate::commands`.
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
+    }
+
+    /// Borrow the current conversation (read-only).
+    pub fn conversation(&self) -> &Conversation {
+        &self.conversation
+    }
+
+    /// Replace the current conversation. Used after `/new` and `/resume` (via
+    /// `crate::commands`) install a different conversation.
+    pub fn set_conversation(&mut self, conversation: Conversation) {
+        self.conversation = conversation;
+        self.resume_warning = None;
+    }
+
     pub fn set_access_mode(&mut self, mode: AccessMode) {
         self.mode = mode;
     }
@@ -240,33 +249,21 @@ impl Session {
 
     pub fn set_model(&mut self, model: impl Into<String>) -> Result<()> {
         let model = model.into();
-        let models =
-            load_or_create_default_model_registry(&self.config.root).map_err(Error::config)?;
-        let metadata = find_session_model(&models, &self.config.provider_id, &model).cloned();
-
-        if let Some(metadata) = &metadata {
-            if metadata.provider != self.config.provider_id {
-                let providers = load_or_create_default_provider_registry(&self.config.root)
-                    .map_err(Error::config)?;
-                let provider = providers
-                    .providers
-                    .iter()
-                    .find(|provider| provider.id == metadata.provider)
-                    .ok_or_else(|| {
-                        Error::config(anyhow::anyhow!(
-                            "model `{}` references unknown provider `{}`",
-                            metadata.id,
-                            metadata.provider
-                        ))
-                    })?;
-                self.config.provider_id = provider.id.clone();
-                self.config.active_provider = provider.to_resolved();
-            }
-        }
-
-        self.config.model = model;
-        self.config.model_metadata = metadata;
+        crate::commands::apply_model_selection(&mut self.config, &model).map_err(Error::config)?;
         self.config.ensure_provider_auth().map_err(Error::config)?;
+        self.reasoning_effort =
+            ReasoningEffort::default_for_model(self.config.model_metadata.as_ref());
+        Ok(())
+    }
+
+    /// Reload the resolved config from disk, picking up provider/model
+    /// changes made by `/login` or `/logout` outside this session. Preserves
+    /// the current conversation, cwd, and access mode; updates reasoning
+    /// effort to the new model's default. Matches the CLI's post-login/logout
+    /// `Config::load` reload.
+    pub fn reload_config(&mut self) -> Result<()> {
+        self.config =
+            crate::commands::reload_config(&self.config.root).map_err(Error::config)?;
         self.reasoning_effort =
             ReasoningEffort::default_for_model(self.config.model_metadata.as_ref());
         Ok(())

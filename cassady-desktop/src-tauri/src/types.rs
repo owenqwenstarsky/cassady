@@ -1,5 +1,8 @@
 use cassady::access::AccessMode;
+use cassady::branch::{BranchFamily, BranchSummary, Checkpoint, CheckpointKind};
+use cassady::commands::CommandSpec;
 use cassady::config::{ModelDefinition, ReasoningEffort};
+use cassady::setup::{LogoutResult, ProviderCatalogEntry, ProviderLogoutCandidate, SetupSelection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +236,340 @@ impl StreamEvent {
 pub struct TurnHandle {
     pub turn_id: String,
     pub chat_id: String,
+}
+
+// --- Slash command DTOs -----------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSpecDto {
+    pub name: String,
+    pub usage: String,
+    pub description: String,
+    pub takes_value: bool,
+}
+
+impl From<CommandSpec> for CommandSpecDto {
+    fn from(spec: CommandSpec) -> Self {
+        Self {
+            name: spec.name.to_string(),
+            usage: spec.usage.to_string(),
+            description: spec.description.to_string(),
+            takes_value: spec.takes_value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoFillItemDto {
+    pub label: String,
+    pub insert: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoFillMenuDto {
+    pub title: String,
+    pub replacement_start: usize,
+    pub replacement_end: usize,
+    pub items: Vec<AutoFillItemDto>,
+    pub selected: usize,
+}
+
+impl From<cassady::commands::AutoFillMenu> for AutoFillMenuDto {
+    fn from(menu: cassady::commands::AutoFillMenu) -> Self {
+        Self {
+            title: menu.title,
+            replacement_start: menu.replacement_start,
+            replacement_end: menu.replacement_end,
+            items: menu
+                .items
+                .into_iter()
+                .map(|item| AutoFillItemDto {
+                    label: item.label,
+                    insert: item.insert,
+                    detail: item.detail,
+                })
+                .collect(),
+            selected: menu.selected,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchSummaryDto {
+    pub id: String,
+    pub created_at: String,
+    pub parent_chat_id: Option<String>,
+    pub branch_label: Option<String>,
+    pub record_count: usize,
+    pub current: bool,
+}
+
+impl From<BranchSummary> for BranchSummaryDto {
+    fn from(b: BranchSummary) -> Self {
+        Self {
+            id: b.id,
+            created_at: b.created_at,
+            parent_chat_id: b.parent_chat_id,
+            branch_label: b.branch_label,
+            record_count: b.record_count,
+            current: b.current,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointDto {
+    pub id: String,
+    pub chat_id: String,
+    pub record_index: usize,
+    pub tool_call_id: Option<String>,
+    pub kind: CheckpointKind,
+    pub label: String,
+    pub detail: String,
+    pub ts: Option<String>,
+}
+
+impl From<Checkpoint> for CheckpointDto {
+    fn from(c: Checkpoint) -> Self {
+        Self {
+            id: c.id,
+            chat_id: c.chat_id,
+            record_index: c.record_index,
+            tool_call_id: c.tool_call_id,
+            kind: c.kind,
+            label: c.label,
+            detail: c.detail,
+            ts: c.ts,
+        }
+    }
+}
+
+impl From<CheckpointDto> for Checkpoint {
+    fn from(c: CheckpointDto) -> Self {
+        Self {
+            id: c.id,
+            chat_id: c.chat_id,
+            record_index: c.record_index,
+            tool_call_id: c.tool_call_id,
+            kind: c.kind,
+            label: c.label,
+            detail: c.detail,
+            ts: c.ts,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchFamilyDto {
+    pub branches: Vec<BranchSummaryDto>,
+    pub checkpoints: Vec<CheckpointDto>,
+}
+
+impl From<BranchFamily> for BranchFamilyDto {
+    fn from(f: BranchFamily) -> Self {
+        Self {
+            branches: f.branches.into_iter().map(BranchSummaryDto::from).collect(),
+            checkpoints: f.checkpoints.into_iter().map(CheckpointDto::from).collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLogoutCandidateDto {
+    pub id: String,
+    pub name: Option<String>,
+    pub default_model: Option<String>,
+    pub model_count: usize,
+}
+
+impl From<ProviderLogoutCandidate> for ProviderLogoutCandidateDto {
+    fn from(c: ProviderLogoutCandidate) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            default_model: c.default_model,
+            model_count: c.model_count,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LogoutResultDto {
+    pub removed_provider_ids: Vec<String>,
+    pub removed_model_count: usize,
+    pub remaining_provider_count: usize,
+    pub active_provider: Option<String>,
+    pub active_model: Option<String>,
+}
+
+impl From<LogoutResult> for LogoutResultDto {
+    fn from(r: LogoutResult) -> Self {
+        Self {
+            removed_provider_ids: r.removed_provider_ids,
+            removed_model_count: r.removed_model_count,
+            remaining_provider_count: r.remaining_provider_count,
+            active_provider: r.active_provider,
+            active_model: r.active_model,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCatalogEntryDto {
+    pub name: String,
+    pub id: String,
+    pub base_url: String,
+    pub api_key_env: String,
+}
+
+impl From<ProviderCatalogEntry> for ProviderCatalogEntryDto {
+    fn from(e: ProviderCatalogEntry) -> Self {
+        Self {
+            name: e.name.to_string(),
+            id: e.id.to_string(),
+            base_url: e.base_url.to_string(),
+            api_key_env: e.api_key_env.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupSelectionDto {
+    pub provider_id: String,
+    pub provider_name: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub model_id: String,
+    pub supports_tools: bool,
+    pub supports_reasoning: bool,
+}
+
+impl From<SetupSelectionDto> for SetupSelection {
+    fn from(s: SetupSelectionDto) -> Self {
+        Self {
+            provider_id: s.provider_id,
+            provider_name: s.provider_name,
+            base_url: s.base_url,
+            api_key_env: s.api_key_env,
+            model_id: s.model_id,
+            supports_tools: s.supports_tools,
+            supports_reasoning: s.supports_reasoning,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreReportDto {
+    pub summary: String,
+    pub applied: usize,
+    pub skipped: usize,
+    pub conflicts: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchResultDto {
+    pub info: ConversationInfoDto,
+    pub source_chat_id: String,
+    pub status: String,
+    pub restore: Option<RestoreReportDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderApplyResultDto {
+    pub active_provider: String,
+    pub active_model: String,
+}
+
+/// Tagged result of `run_slash_command`, mirroring `cassady::commands::CommandOutcome`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum CommandOutcomeDto {
+    Status {
+        title: String,
+        content: String,
+    },
+    NewChat {
+        info: ConversationInfoDto,
+        status: String,
+    },
+    ResumedChat {
+        info: ConversationInfoDto,
+        warning: Option<String>,
+        status: String,
+    },
+    OpenBranchPicker {
+        family: BranchFamilyDto,
+    },
+    OpenLoginWizard,
+    OpenLogoutPicker {
+        candidates: Vec<ProviderLogoutCandidateDto>,
+    },
+    Busy {
+        message: String,
+    },
+    ParseError {
+        message: String,
+    },
+    Error {
+        title: String,
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunSlashCommandArgs {
+    pub chat_id: String,
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlashAutofillArgs {
+    pub input: String,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateBranchArgs {
+    pub chat_id: String,
+    pub checkpoint: CheckpointDto,
+    pub restore_files: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyProviderLoginArgs {
+    pub selections: Vec<SetupSelectionDto>,
+    pub active_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverModelsArgs {
+    pub base_url: String,
+    pub api_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveProvidersArgs {
+    pub provider_ids: Vec<String>,
 }
 
 #[cfg(test)]

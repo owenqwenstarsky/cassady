@@ -41,6 +41,8 @@ export function Transcript({ blocks }: { blocks: TranscriptBlock[] }) {
                 return <ToolBlock key={b.id} block={b} />;
               case "status":
                 return <StatusBlock key={b.id} text={b.text} />;
+              case "error":
+                return <StatusBlock key={b.id} text={b.text} marker="✗" />;
               default:
                 return null;
             }

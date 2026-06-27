@@ -1,5 +1,36 @@
 # Cassady (Cass) Roadmap
 
+## v0.4.2 — Desktop Slash Commands
+
+This release focuses on full slash-command support in the desktop app and on moving the command system out of the CLI into a shared core module so the TUI and the desktop share one registry, parser, autocomplete, and execution path. The desktop composer now surfaces a filterable slash menu with auto-run, and the interactive commands (`/login`, `/logout`, `/branch`) open native modals. See `plans/DESKTOP_SLASH_COMMANDS_PLAN.md`.
+
+### Shared Command Core
+
+- [x] **Add the `cassady::commands` module.** Move the command catalog (`COMMANDS`/`CommandSpec`), `LocalCommand`/`FastModeCommand` enums, `parse`, the autocomplete builders (`build_autofill` + `command_autofill`/`model_autofill`/`resume_chat_autofill`), and the pure action functions out of `src/app.rs` into a new public core module.
+  - Move `AutoFillItem`/`AutoFillMenu` from `ui/autofill.rs` into `commands` (with serde derives); `ui/autofill` re-exports them so the TUI renderer is unchanged.
+  - Add `CommandOutcome`/`CommandContext`/`execute` as the single entry point both hosts use; interactive commands return `Open*Picker` outcomes so each host renders its own picker.
+
+- [x] **Refactor the CLI dispatcher onto the shared module.** Replace the inline `match parse_local_command` block and the private helpers in `src/app.rs` with `commands::execute` + an outcome match; delete the duplicated code. CLI user-facing behavior is unchanged.
+
+- [x] **Expose `embedding::Session` accessors.** Add `config`/`config_mut`/`conversation`/`set_conversation` and refactor `Session::set_model` to delegate to `commands::apply_model_selection`, removing the duplicated resolve/switch logic.
+
+### Desktop Slash Surface
+
+- [x] **Add a slash-command popup to the composer.** `SlashMenu` reuses the `ModelSelector` pattern (filter, arrow-key nav, grouped headers, click-outside) and auto-runs complete commands on selection; value-command names insert and keep the menu open for argument selection. Typing a complete command and pressing Enter also runs it.
+  - Add Tauri commands `list_slash_commands`, `slash_autofill`, `run_slash_command`, plus `create_branch_from_checkpoint`, `apply_provider_login`, `discover_models`, `remove_providers`, and `list_provider_catalog`, with camelCase DTOs and TS mirrors.
+
+- [x] **Route command outcomes in the desktop shell.** `/fast`, `/status`, and `/model` push status blocks and update the status footer; `/new` and `/resume` install the new conversation and rebuild the transcript (including resume warnings); busy/parse/error outcomes update the status line.
+
+### Interactive Command Modals
+
+- [x] **Add a branch/restore modal.** `BranchModal` lists the branch family, supports switching to a branch or branching from a checkpoint (conversation-only or with tracked-file restore), and reports the restore outcome in the transcript.
+- [x] **Add a logout modal.** `LogoutModal` multi-selects configured providers, removes them via `remove_providers`, refreshes the model list, and reports the result.
+- [x] **Add a login wizard modal.** `LoginModal` picks a provider from the catalog, configures base URL / API-key env / model id, and applies via `apply_provider_login`.
+
+### Verification
+
+- [x] **Build, test, and document.** `cargo test --locked --all-targets`, `cargo fmt --check`, `cargo clippy` (no new warnings), the desktop `npm run typecheck` and `npm run build` all pass. Update `docs/commands.md` to note desktop parity.
+
 ## v0.4.0 — Desktop App
 
 This release focuses on adding a native desktop app for Cassady that runs the real coding agent via the experimental Rust embedding API, themed to match the `cassady-web/` landing page. The desktop app is a peer of the TUI: same config, providers, tools, safety policy, and JSONL storage, with a windowed chat surface for streaming transcripts, tool calls, approvals, and cancellation. See `plans/V0_4_0_DESKTOP_APP_PLAN.md`.

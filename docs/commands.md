@@ -115,7 +115,10 @@ The updater does not invoke `sudo` or administrator prompts. If the install dire
 
 ## In-chat commands
 
-Type `/` to open command autocomplete.
+Type `/` to open command autocomplete. These commands work in both the terminal
+TUI (`cass`/`cassady`) and the desktop app's composer, with autocomplete and
+auto-run on full selection. The command catalog, parser, and execution live in
+the shared `cassady::commands` module, so behavior stays in sync across hosts.
 
 - `/branch` or `/restore`: open the branch/restore menu for the current conversation family.
 - `/fast`, `/fast on`, `/fast off`, `/fast status`: toggle or inspect a persisted fast-mode preference. Fast mode is active only when the current provider/model supports it; ChatGPT Codex models, including `gpt-5.5`, are treated as fast-capable.
@@ -126,7 +129,9 @@ Type `/` to open command autocomplete.
 - `/resume <chat>`: resume a saved chat from the current directory. Autocomplete lists matching chats.
 - `/status`: show chat id, state, model, fast-mode state, access mode, cwd, record count, and current status.
 
-Local commands can be used only when the agent is idle.
+Local commands can be used only when the agent is idle. In the desktop app,
+`/login`, `/logout`, and `/branch` open native modals instead of the terminal
+wizards/menus used by the CLI.
 
 ## Keys
 
