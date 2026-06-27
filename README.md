@@ -1,5 +1,7 @@
 # Cassady / Cass
 
+> ⚠️ This project is in early beta. It may not run perfectly on all hardware or operating systems, and setup may require some manual work.
+
 Cassady (`cass`) is a terminal coding agent written in Rust. It runs an interactive chat in your project, can inspect files, apply exact edits, run shell commands when the active safety mode allows them, and persist sessions for later resume. Cassady talks to OpenAI-compatible providers and a built-in ChatGPT Codex provider preset.
 
 The project installs two equivalent commands, `cass` and `cassady`; examples use `cass`.
